@@ -10,6 +10,105 @@
 
 using namespace std;
 
+
+
+#include "algorithms/InfrastructureOptimizer.h"
+#include <iostream>
+#include <vector>
+
+void testInfrastructureOptimizer() {
+    std::vector<Infrastructure> projects(4);
+
+    // Solar Power Station
+    projects[0].id = 1;
+    projects[0].constructionCost = 40;
+    projects[0].strategicValue = 60;
+
+    // Medical Center
+    projects[1].id = 2;
+    projects[1].constructionCost = 50;
+    projects[1].strategicValue = 80;
+
+    // Defense System
+    projects[2].id = 3;
+    projects[2].constructionCost = 60;
+    projects[2].strategicValue = 90;
+
+    // Research Laboratory
+    projects[3].id = 4;
+    projects[3].constructionCost = 30;
+    projects[3].strategicValue = 45;
+
+    auto result = InfrastructureOptimizer::optimize(projects, 100);
+
+    std::cout << "\n=== INFRASTRUCTURE DP TEST ===\n";
+    std::cout << "Total cost: " << result.totalCost << "\n";
+    std::cout << "Total strategic value: "
+        << result.totalStrategicValue << "\n";
+
+    std::cout << "Selected infrastructure IDs: ";
+    for (int id : result.selectedInfrastructureIds) {
+        std::cout << id << " ";
+    }
+    std::cout << "\n";
+}
+
+
+
+void testCustomMissionScheduler() {
+    GalaxyGraph galaxy;
+    galaxy.addLocation(1);
+    galaxy.addLocation(2);
+
+    Route route{};
+    route.id = 900;
+    route.from = 1;
+    route.to = 2;
+    route.distance = 20;
+    route.isAvailable = true;
+    galaxy.addRoute(route);
+
+    Mission mission{};
+    mission.id = 900;
+    mission.origin = 1;
+    mission.destination = 2;
+    mission.cargoAmount = 20;
+    mission.deadline = 10;
+    mission.priority = 5;
+
+    Spacecraft fast{};
+    fast.id = 101;
+    fast.currentLocation = 1;
+    fast.maxCargoCapacity = 100;
+    fast.maxFuelCapacity = 100;
+    fast.currentFuel = 100;
+    fast.speed = 20;
+    fast.availableAt = 0;
+    fast.reliability = 1;
+
+    Spacecraft efficient = fast;
+    efficient.id = 102;
+    efficient.maxCargoCapacity = 25;
+    efficient.speed = 10;
+
+    auto result = MissionScheduler::schedule(
+        { mission }, { fast, efficient }, galaxy
+    );
+
+    std::cout << "\n=== CUSTOM SCHEDULER TEST ===\n";
+
+    if (!result.scheduled.empty()) {
+        std::cout << "Selected spacecraft: "
+            << result.scheduled[0].spacecraftId << "\n";
+        std::cout << "Arrival time: "
+            << result.scheduled[0].arrivalTime << "\n";
+    }
+    else {
+        std::cout << "Mission rejected\n";
+    }
+}
+
+
 int main() {
 
     GalaxyGraph galaxy;
@@ -587,6 +686,14 @@ int main() {
     cout << "Failed: " << tooSlow.failed << endl;
     cout << "Rerouted: " << tooSlow.rerouted << endl;
     cout << "Delivered: " << tooSlow.deliveredAmount << endl;
+
+
+    testInfrastructureOptimizer();
+
+
+
+    testCustomMissionScheduler();
+
 
     return 0;
 }

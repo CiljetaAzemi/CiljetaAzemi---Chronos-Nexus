@@ -53,9 +53,11 @@ SchedulingResult MissionScheduler::schedule(
             continue;
         }
 
+
         int bestShip = -1;
-        double bestArrival =
-            std::numeric_limits<double>::infinity();
+        double bestArrival = std::numeric_limits<double>::infinity();
+        double bestScore = std::numeric_limits<double>::infinity();
+
 
         for (int i = 0;
             i < static_cast<int>(spacecraft.size());
@@ -104,10 +106,32 @@ SchedulingResult MissionScheduler::schedule(
             if (arrival > mission.deadline)
                 continue;
 
-            if (arrival < bestArrival) {
+
+            // Custom heuristic: balance arrival time, unused cargo
+            // capacity, and fuel consumption.
+
+            double timeScore = arrival / (1.0 + mission.deadline);
+
+            double cargoWaste =
+                (ship.maxCargoCapacity - mission.cargoAmount)
+                / ship.maxCargoCapacity;
+
+            double fuelScore =
+                fuelNeeded / ship.maxFuelCapacity;
+
+            // Lower score is better.
+            double score =
+                0.50 * timeScore +
+                0.35 * cargoWaste +
+                0.15 * fuelScore;
+
+            if (score < bestScore ||
+                (score == bestScore && arrival < bestArrival)) {
+                bestScore = score;
                 bestArrival = arrival;
                 bestShip = i;
             }
+
         }
 
         if (bestShip == -1) {

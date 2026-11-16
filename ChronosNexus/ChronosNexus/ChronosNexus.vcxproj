@@ -140,6 +140,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="algorithms\Dijkstra.cpp" />
+    <ClCompile Include="algorithms\InfrastructureOptimizer.cpp" />
     <ClCompile Include="algorithms\MissionScheduler.cpp" />
     <ClCompile Include="algorithms\ResourceAllocator.cpp" />
     <ClCompile Include="graph\GalaxyGraph.cpp" />
@@ -148,6 +149,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="algorithms\Dijkstra.h" />
+    <ClInclude Include="algorithms\InfrastructureOptimizer.h" />
     <ClInclude Include="algorithms\LogisticsPlanner.h" />
     <ClInclude Include="algorithms\MissionScheduler.h" />
     <ClInclude Include="algorithms\ResourceAllocator.h" />
