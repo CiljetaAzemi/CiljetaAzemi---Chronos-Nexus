@@ -6,6 +6,7 @@
 #include "algorithms/ResourceAllocator.h"
 #include "algorithms/MissionScheduler.h"
 #include "algorithms/LogisticsPlanner.h"
+#include "simulation/SimulationEngine.h"
 
 using namespace std;
 
@@ -451,6 +452,141 @@ int main() {
             << " | Arrival: " << mission.arrivalTime
             << endl;
     }
+
+
+
+
+    cout << "\n=== SIMULATION TEST ===\n";
+
+    // First test: all scheduled deliveries succeed.
+    vector<Event> noEvents;
+
+    SimulationResult normal = SimulationEngine::run(
+        logisticsGalaxy,
+        logisticsDemands,
+        plan.missions,
+        logisticsShips,
+        plan.scheduling,
+        noEvents
+    );
+
+    cout << "Normal completed: "
+        << normal.completed << endl;
+
+    cout << "Normal failed: "
+        << normal.failed << endl;
+
+    cout << "Normal delivered: "
+        << normal.deliveredAmount << endl;
+
+    cout << "Normal shortage: "
+        << normal.remainingShortage << endl;
+
+    // Second test: block Planet 2 -> Planet 3
+    // before the first spacecraft departs.
+    Event blockage{};
+    blockage.id = 1;
+    blockage.eventTime = 0.0;
+    blockage.eventType = EventType::RouteBlocked;
+    blockage.affectedObjectType = AffectedObjectType::Route;
+    blockage.affectedObjectId = 402;
+
+    vector<Event> disruptions = { blockage };
+
+    SimulationResult disrupted = SimulationEngine::run(
+        logisticsGalaxy,
+        logisticsDemands,
+        plan.missions,
+        logisticsShips,
+        plan.scheduling,
+        disruptions
+    );
+
+    cout << "\nAfter route blockage:\n";
+
+    cout << "Completed: "
+        << disrupted.completed << endl;
+
+    cout << "Failed: "
+        << disrupted.failed << endl;
+
+    cout << "Delivered: "
+        << disrupted.deliveredAmount << endl;
+
+    cout << "Remaining shortage: "
+        << disrupted.remainingShortage << endl;
+
+    cout << "Events processed: "
+        << disrupted.eventsProcessed << endl;
+
+
+
+
+    cout << "\n=== DYNAMIC REPLANNING TESTS ===\n";
+
+    // TEST 1: Alternative route exists.
+    GalaxyGraph rerouteGalaxy = logisticsGalaxy;
+
+    Route alternativeA{};
+    alternativeA.id = 403;
+    alternativeA.from = 2;
+    alternativeA.to = 1;
+    alternativeA.distance = 5;
+    alternativeA.isAvailable = true;
+    rerouteGalaxy.addRoute(alternativeA);
+
+    // After route 402 is blocked:
+    // Planet 2 -> Planet 1 -> Planet 3
+    // Distance = 5 + 20 = 25.
+
+    SimulationResult rerouted = SimulationEngine::run(
+        rerouteGalaxy,
+        logisticsDemands,
+        plan.missions,
+        logisticsShips,
+        plan.scheduling,
+        disruptions
+    );
+
+    cout << "\nTEST 1 - Alternative available\n";
+    cout << "Completed: " << rerouted.completed << endl;
+    cout << "Failed: " << rerouted.failed << endl;
+    cout << "Rerouted: " << rerouted.rerouted << endl;
+    cout << "Delivered: " << rerouted.deliveredAmount << endl;
+    cout << "Shortage: " << rerouted.remainingShortage << endl;
+
+    // TEST 2: No alternative route.
+    // Reuse our original graph with blocked route 402.
+    cout << "\nTEST 2 - No alternative\n";
+    cout << "Completed: " << disrupted.completed << endl;
+    cout << "Failed: " << disrupted.failed << endl;
+    cout << "Delivered: " << disrupted.deliveredAmount << endl;
+
+    // TEST 3: Alternative route exceeds deadline.
+    GalaxyGraph slowGalaxy = logisticsGalaxy;
+
+    Route slowAlternative{};
+    slowAlternative.id = 404;
+    slowAlternative.from = 2;
+    slowAlternative.to = 1;
+    slowAlternative.distance = 200;
+    slowAlternative.isAvailable = true;
+    slowGalaxy.addRoute(slowAlternative);
+
+    SimulationResult tooSlow = SimulationEngine::run(
+        slowGalaxy,
+        logisticsDemands,
+        plan.missions,
+        logisticsShips,
+        plan.scheduling,
+        disruptions
+    );
+
+    cout << "\nTEST 3 - Alternative too slow\n";
+    cout << "Completed: " << tooSlow.completed << endl;
+    cout << "Failed: " << tooSlow.failed << endl;
+    cout << "Rerouted: " << tooSlow.rerouted << endl;
+    cout << "Delivered: " << tooSlow.deliveredAmount << endl;
 
     return 0;
 }

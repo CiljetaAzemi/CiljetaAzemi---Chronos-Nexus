@@ -30,6 +30,9 @@
     <ClCompile Include="algorithms\MissionScheduler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="simulation\SimulationEngine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="models\Resource.h">
@@ -75,6 +78,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="algorithms\LogisticsPlanner.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="simulation\SimulationEngine.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
