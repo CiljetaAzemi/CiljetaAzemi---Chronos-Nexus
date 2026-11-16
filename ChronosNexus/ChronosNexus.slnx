@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="ChronosNexus/ChronosNexus.vcxproj" />
+  <Project Path="ChronosNexus/ChronosNexus.vcxproj" Id="c85f94a1-ee8e-4d28-80e0-bf43410ab613" />
 </Solution>
