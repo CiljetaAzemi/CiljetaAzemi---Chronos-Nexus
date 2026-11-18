@@ -1,338 +1,256 @@
-
 #include "SimulationEngine.h"
 
-#include <queue>
-#include <unordered_set>
-#include <unordered_map>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
-#include <limits>
+#include <queue>
+#include <stdexcept>
+#include <unordered_set>
 
 namespace {
+enum class ActionType { Event, Arrival, Departure };
 
-    enum class ActionType {
-        ExternalEvent = 0,
-        Arrival = 1,
-        Departure = 2
-    };
+struct Action {
+    double time;
+    ActionType type;
+    size_t index;
+};
 
-    struct Action {
-        double time;
-        ActionType type;
-        int index;
-        int sequence;
-    };
-
-    struct ActionCompare {
-        bool operator()(const Action& a, const Action& b) const {
-            if (a.time != b.time)
-                return a.time > b.time;
-
-            if (a.type != b.type)
-                return static_cast<int>(a.type) >
-                static_cast<int>(b.type);
-
-            return a.sequence > b.sequence;
-        }
-    };
-
-    bool pathAvailable(
-        const GalaxyGraph& galaxy,
-        const std::vector<int>& path
-    ) {
-        if (path.empty())
-            return false;
-
-        for (size_t i = 1; i < path.size(); ++i) {
-            int from = path[i - 1];
-            int to = path[i];
-
-            if (!galaxy.hasLocation(from))
-                return false;
-
-            bool found = false;
-
-            for (const Route& route : galaxy.getRoutes(from)) {
-                if (route.to == to && route.isAvailable) {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (!found)
-                return false;
-        }
-
-        return true;
+struct Later {
+    bool operator()(const Action& a, const Action& b) const {
+        if (a.time != b.time)
+            return a.time > b.time;
+        if (a.type != b.type)
+            return a.type > b.type;
+        return a.index > b.index;
     }
+};
 
-} // namespace
+struct Balance {
+    double stock = 0;
+    double target = 0;
+    double production = 0;
+    double consumption = 0;
+    double storage = 1e30;
+    double updatedAt = 0;
 
-SimulationResult SimulationEngine::run(
-    const GalaxyGraph& galaxy,
-    const std::vector<ResourceDemand>& planets,
-    const std::vector<Mission>& missions,
-    const std::vector<Spacecraft>& spacecraft,
-    const SchedulingResult& schedule,
-    const std::vector<Event>& events
-) {
+    void advance(double now, SimulationResult& result) {
+        const double next = stock + (production - consumption) * (now - updatedAt);
+        result.waste += std::max(0.0, next - storage);
+        result.stockoutAmount += std::max(0.0, -next);
+        stock = std::clamp(next, 0.0, storage);
+        updatedAt = now;
+    }
+};
+}
+
+SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
+    const std::vector<ResourceDemand>& planets, const std::vector<Mission>& missions,
+    const std::vector<Spacecraft>& spacecraft, const SchedulingResult& schedule,
+    const std::vector<Event>& events, const std::function<void(size_t)>& progress,
+    bool recheckAllDepartures, double minimumHorizon) {
     SimulationResult result;
-    result.scheduled =
-        static_cast<int>(schedule.scheduled.size());
-
-    GalaxyGraph activeGalaxy = galaxy;
-
-    std::unordered_map<int, double> required;
+    result.scheduled = static_cast<int>(schedule.scheduled.size());
+    GalaxyGraph active = galaxy;
+    std::unordered_map<int, std::unordered_map<ResourceType, Balance>> balances;
+    for (const auto& p : planets) {
+        if (!std::isfinite(p.available) || !std::isfinite(p.required) ||
+            !std::isfinite(p.production) || !std::isfinite(p.consumption) ||
+            !std::isfinite(p.storage) || p.available < 0 || p.required < 0 ||
+            p.production < 0 || p.consumption < 0 || p.storage < p.available ||
+            !balances[p.planetId].emplace(p.type, Balance{p.available, p.required,
+                p.production, p.consumption, p.storage}).second)
+            throw std::invalid_argument("Invalid or duplicate inventory.");
+    }
     std::unordered_map<int, const Mission*> missionById;
-    std::unordered_map<int, Spacecraft> shipById;
-    std::unordered_set<int> disabledShips;
-    std::unordered_set<int> cargoInTransit;
-
-    for (const auto& planet : planets) {
-        result.finalResources[planet.planetId] = planet.available;
-        required[planet.planetId] = planet.required;
-    }
-
+    std::unordered_map<int, Spacecraft> ships;
     for (const auto& mission : missions) {
-        missionById[mission.id] = &mission;
-        result.missionStatuses[mission.id] =
-            MissionStatus::Pending;
+        if (!missionById.emplace(mission.id, &mission).second)
+            throw std::invalid_argument("Duplicate mission ID.");
+        result.missionStatuses.emplace(mission.id, MissionStatus::Pending);
     }
-
     for (const auto& ship : spacecraft)
-        shipById[ship.id] = ship;
+        if (!ships.emplace(ship.id, ship).second)
+            throw std::invalid_argument("Duplicate spacecraft ID.");
 
-    std::priority_queue<
-        Action,
-        std::vector<Action>,
-        ActionCompare
-    > queue;
-
-    int sequence = 0;
-
-    for (int i = 0; i < static_cast<int>(events.size()); ++i) {
-        if (std::isfinite(events[i].eventTime) &&
-            events[i].eventTime >= 0.0) {
-
-            queue.push({
-                events[i].eventTime,
-                ActionType::ExternalEvent,
-                i,
-                sequence++
-                });
-        }
+    std::unordered_set<int> disabled;
+    std::unordered_set<int> inFlight;
+    std::priority_queue<Action, std::vector<Action>, Later> queue;
+    for (size_t i = 0; i < events.size(); ++i)
+        if (std::isfinite(events[i].eventTime) && events[i].eventTime >= 0)
+            queue.push({events[i].eventTime, ActionType::Event, i});
+    for (size_t i = 0; i < schedule.scheduled.size(); ++i) {
+        const auto& entry = schedule.scheduled[i];
+        if (!missionById.contains(entry.missionId) ||
+            !std::isfinite(entry.departureTime) || entry.departureTime < 0)
+            throw std::invalid_argument("Invalid scheduled departure.");
+        auto& status = result.missionStatuses.at(entry.missionId);
+        if (status != MissionStatus::Pending)
+            throw std::invalid_argument("Duplicate scheduled mission.");
+        status = MissionStatus::Scheduled;
+        queue.push({entry.departureTime, ActionType::Departure, i});
     }
 
-    for (int i = 0;
-        i < static_cast<int>(schedule.scheduled.size());
-        ++i) {
-
-        const auto& scheduled = schedule.scheduled[i];
-
-        if (!missionById.count(scheduled.missionId) ||
-            !std::isfinite(scheduled.departureTime) ||
-            !std::isfinite(scheduled.arrivalTime) ||
-            scheduled.departureTime < 0.0 ||
-            scheduled.arrivalTime < scheduled.departureTime)
-            continue;
-
-        result.missionStatuses[scheduled.missionId] =
-            MissionStatus::Scheduled;
-
-        // Only departure is queued initially.
-        queue.push({
-            scheduled.departureTime,
-            ActionType::Departure,
-            i,
-            sequence++
-            });
-    }
-
+    double now = 0;
     while (!queue.empty()) {
-        Action action = queue.top();
+        const auto action = queue.top();
         queue.pop();
-
-        if (action.type == ActionType::ExternalEvent) {
-            const Event& event = events[action.index];
-            ++result.eventsProcessed;
-
+        now = action.time;
+        if (progress)
+            progress(static_cast<size_t>(result.completed + result.failed));
+        if (action.type == ActionType::Event) {
+            const auto& event = events[action.index];
+            const auto id = event.affectedObjectId;
+            bool applied = false;
             switch (event.eventType) {
-
             case EventType::RouteBlocked:
             case EventType::WormholeCollapse:
             case EventType::PirateBlockade:
-                if (event.affectedObjectType ==
-                    AffectedObjectType::Route) {
-                    activeGalaxy.blockRoute(
-                        event.affectedObjectId
-                    );
-                }
+                applied = active.blockRoute(id);
                 break;
-
+            case EventType::RouteRiskIncrease:
+                applied = active.updateRouteRisk(id, event.severity);
+                break;
             case EventType::SpacecraftDestroyed:
             case EventType::SpacecraftMechanicalFailure:
-                if (event.affectedObjectType ==
-                    AffectedObjectType::Spacecraft) {
-                    disabledShips.insert(
-                        event.affectedObjectId
-                    );
-                }
+                applied = ships.contains(id) && disabled.insert(id).second;
                 break;
-
+            case EventType::ResourceProductionDecrease:
+            case EventType::ConstructionCompleted: {
+                const auto location = balances.find(id);
+                if (location == balances.end())
+                    break;
+                const auto resource = location->second.find(event.resourceType);
+                if (resource == location->second.end() || !std::isfinite(event.severity))
+                    break;
+                auto& b = resource->second;
+                b.advance(now, result);
+                if (event.eventType == EventType::ConstructionCompleted)
+                    b.production += std::max(0.0, event.severity);
+                else
+                    b.production *= 1 - std::clamp(event.severity, 0.0, 1.0);
+                applied = true;
+                break;
+            }
             default:
-                ++result.unsupportedEvents;
                 break;
             }
-
+            if (applied)
+                ++result.eventsProcessed;
+            else
+                ++result.unsupportedEvents;
             continue;
         }
 
-        const ScheduledMission& scheduled =
-            schedule.scheduled[action.index];
-
-        auto missionIt =
-            missionById.find(scheduled.missionId);
-
-        if (missionIt == missionById.end())
-            continue;
-
-        const Mission& mission = *missionIt->second;
-        MissionStatus& status =
-            result.missionStatuses[mission.id];
-
-        if (action.type == ActionType::Departure) {
-
-            if (status != MissionStatus::Scheduled)
-                continue;
-
-            auto shipIt =
-                shipById.find(scheduled.spacecraftId);
-
-            auto originIt =
-                result.finalResources.find(mission.origin);
-
-            bool canDepart =
-                shipIt != shipById.end() &&
-                !disabledShips.count(scheduled.spacecraftId) &&
-                originIt != result.finalResources.end() &&
-                std::isfinite(mission.cargoAmount) &&
-                mission.cargoAmount > 0.0;
-
-            if (!canDepart) {
-                status = MissionStatus::Failed;
-                ++result.failed;
-                continue;
-            }
-
-            Spacecraft& ship = shipIt->second;
-
-            if (originIt->second < mission.cargoAmount ||
-                ship.speed <= 0.0 ||
-                ship.maxCargoCapacity < mission.cargoAmount ||
-                !std::isfinite(ship.currentFuel)) {
-
-                status = MissionStatus::Failed;
-                ++result.failed;
-                continue;
-            }
-
-            double fuelNeeded = scheduled.fuelUsed;
-            double arrivalTime = scheduled.arrivalTime;
-
-            // Replan only if the original path is blocked.
-            if (!pathAvailable(activeGalaxy, scheduled.path)) {
-
-                PathResult alternative =
-                    Dijkstra::findShortestPath(
-                        activeGalaxy,
-                        mission.origin,
-                        mission.destination
-                    );
-
-                if (!alternative.found ||
-                    !std::isfinite(alternative.totalCost)) {
-
-                    status = MissionStatus::Failed;
-                    ++result.failed;
-                    continue;
-                }
-
-                fuelNeeded = alternative.totalCost;
-
-                arrivalTime =
-                    action.time + alternative.totalCost / ship.speed;
-
-                // Alternative must still satisfy constraints.
-                if (fuelNeeded > ship.currentFuel ||
-                    fuelNeeded > ship.maxFuelCapacity ||
-                    arrivalTime > mission.deadline) {
-
-                    status = MissionStatus::Failed;
-                    ++result.failed;
-                    continue;
-                }
-
-                ++result.rerouted;
-            }
-
-            if (!std::isfinite(fuelNeeded) ||
-                fuelNeeded < 0.0 ||
-                fuelNeeded > ship.currentFuel ||
-                !std::isfinite(arrivalTime) ||
-                arrivalTime < action.time ||
-                arrivalTime > mission.deadline) {
-
-                status = MissionStatus::Failed;
-                ++result.failed;
-                continue;
-            }
-
-            originIt->second -= mission.cargoAmount;
-            ship.currentFuel -= fuelNeeded;
-
-            cargoInTransit.insert(mission.id);
-            status = MissionStatus::InProgress;
-
-            // Queue the ACTUAL arrival time.
-            queue.push({
-                arrivalTime,
-                ActionType::Arrival,
-                action.index,
-                sequence++
-                });
-        }
-        else if (action.type == ActionType::Arrival) {
-
+        const auto& entry = schedule.scheduled[action.index];
+        const auto& mission = *missionById.at(entry.missionId);
+        auto& status = result.missionStatuses.at(mission.id);
+        auto fail = [&] {
+            status = MissionStatus::Failed;
+            ++result.failed;
+        };
+        auto shipIt = ships.find(entry.spacecraftId);
+        if (action.type == ActionType::Arrival) {
             if (status != MissionStatus::InProgress)
                 continue;
-
-            if (disabledShips.count(scheduled.spacecraftId)) {
-                status = MissionStatus::Failed;
-                cargoInTransit.erase(mission.id);
-                ++result.failed;
+            inFlight.erase(entry.spacecraftId);
+            if (disabled.contains(entry.spacecraftId)) {
+                result.waste += mission.cargoAmount;
+                fail();
                 continue;
             }
-
-            if (!cargoInTransit.erase(mission.id))
-                continue;
-
-            result.finalResources[mission.destination] +=
-                mission.cargoAmount;
-
-            result.deliveredAmount += mission.cargoAmount;
-
+            auto& ship = shipIt->second;
+            ship.currentLocation = mission.destination;
+            ship.availableAt = now;
+            auto& destination = balances[mission.destination][mission.cargoType];
+            destination.advance(now, result);
+            const double accepted = std::min(mission.cargoAmount, destination.storage - destination.stock);
+            destination.stock += accepted;
+            result.deliveredAmount += accepted;
+            result.waste += mission.cargoAmount - accepted;
             status = MissionStatus::Completed;
             ++result.completed;
+            continue;
+        }
+
+        if (status != MissionStatus::Scheduled)
+            continue;
+        const auto origin = balances.find(mission.origin);
+        if (shipIt == ships.end() || disabled.contains(entry.spacecraftId) ||
+            origin == balances.end() || !origin->second.contains(mission.cargoType)) {
+            fail();
+            continue;
+        }
+        auto& ship = shipIt->second;
+        if (inFlight.contains(ship.id) || ship.availableAt > now) {
+            if (ship.availableAt > now && ship.availableAt <= mission.deadline)
+                queue.push({ship.availableAt, ActionType::Departure, action.index});
+            else
+                fail();
+            continue;
+        }
+        if (ship.currentLocation != mission.origin) {
+            fail();
+            continue;
+        }
+        auto& stock = origin->second.at(mission.cargoType);
+        stock.advance(now, result);
+        if (stock.stock < mission.cargoAmount) {
+            fail();
+            continue;
+        }
+
+        RouteMetrics metrics;
+        double arrival = 0;
+        const bool originalFeasible = Dijkstra::measure(active, entry.routeIds,
+            mission.origin, mission.destination, mission.cargoAmount, metrics) &&
+            MissionScheduler::feasible(mission, ship, now, metrics, arrival);
+        if (recheckAllDepartures || !originalFeasible) {
+            ++result.replans;
+            const auto start = std::chrono::steady_clock::now();
+            bool found = false;
+            for (const auto& weights : {entry.weights, RouteWeights{0, 1, 0}, RouteWeights{0, 0, 1}}) {
+                const auto alternative = Dijkstra::findShortestPath(active, mission.origin,
+                    mission.destination, weights, mission.cargoAmount);
+                result.nodesExplored += alternative.nodesExplored;
+                if (alternative.found &&
+                    MissionScheduler::feasible(mission, ship, now, alternative.metrics, arrival)) {
+                    metrics = alternative.metrics;
+                    found = true;
+                    if (alternative.routeIds != entry.routeIds)
+                        ++result.rerouted;
+                    break;
+                }
+            }
+            result.replanSeconds += std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - start).count();
+            if (!found) {
+                fail();
+                continue;
+            }
+        }
+        stock.stock -= mission.cargoAmount;
+        ship.currentFuel -= metrics.fuel;
+        ship.availableAt = arrival;
+        inFlight.insert(ship.id);
+        status = MissionStatus::InProgress;
+        // Account for the full route at departure. Closures affect future departures only.
+        result.distance += metrics.distance;
+        result.fuel += metrics.fuel;
+        result.risk += metrics.risk;
+        result.transportationCost += metrics.distance * ship.operatingCost;
+        queue.push({arrival, ActionType::Arrival, action.index});
+    }
+
+    now = std::max(now, minimumHorizon);
+    for (auto& [location, resources] : balances) {
+        for (auto& [type, stock] : resources) {
+            stock.advance(now, result);
+            result.finalResources[location] += stock.stock;
+            result.remainingShortage += std::max(0.0, stock.target - stock.stock);
         }
     }
-
-    for (const auto& [planetId, demand] : required) {
-        result.remainingShortage +=
-            std::max(
-                0.0,
-                demand - result.finalResources[planetId]
-            );
-    }
-
+    if (progress)
+        progress(static_cast<size_t>(result.completed + result.failed));
     return result;
 }

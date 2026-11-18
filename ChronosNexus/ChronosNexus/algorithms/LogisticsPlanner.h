@@ -1,8 +1,7 @@
-
 #pragma once
 
-#include <vector>
 #include <cmath>
+#include <unordered_map>
 #include "ResourceAllocator.h"
 #include "MissionScheduler.h"
 
@@ -14,61 +13,44 @@ struct LogisticsPlan {
 
 class LogisticsPlanner {
 public:
-    static LogisticsPlan createPlan(
-        std::vector<ResourceDemand> demands,
-        std::vector<Spacecraft> spacecraft,
-        const GalaxyGraph& galaxy,
-        ResourceType resourceType,
-        double deadline,
-        const RouteWeights& weights = {}
-    ) {
-        LogisticsPlan plan;
+    static std::vector<Mission> createMissions(const AllocationResult& allocation,
+        const std::vector<ResourceDemand>& demands, ResourceType resourceType,
+        double deadline, int nextMissionId = 1) {
+        std::unordered_map<int, const ResourceDemand*> receivers;
+        for (const auto& demand : demands)
+            if (demand.type == resourceType)
+                receivers.emplace(demand.planetId, &demand);
 
-        // Step 1: Plan resource transfers.
-        plan.allocation =
-            ResourceAllocator::allocateWithRoutes(
-                demands, galaxy, weights
-            );
-
-        // Step 2: Convert transfers to Mission objects.
-        int nextMissionId = 1;
-
-        for (const ResourceTransfer& transfer :
-            plan.allocation.transfers) {
-
-            if (!std::isfinite(transfer.amount) ||
-                transfer.amount <= 0.0)
+        std::vector<Mission> missions;
+        for (const auto& transfer : allocation.transfers) {
+            if (!std::isfinite(transfer.amount) || transfer.amount <= 0)
                 continue;
-
-            Mission mission{};
-
+            Mission mission;
             mission.id = nextMissionId++;
             mission.origin = transfer.fromPlanet;
             mission.destination = transfer.toPlanet;
             mission.cargoType = resourceType;
             mission.cargoAmount = transfer.amount;
             mission.deadline = deadline;
-
-            // Use the receiver's priority.
-            for (const ResourceDemand& demand : demands) {
-                if (demand.planetId == transfer.toPlanet) {
-                    mission.priority = demand.priority;
-                    break;
-                }
-            }
-
-            mission.status = MissionStatus::Pending;
-
-            plan.missions.push_back(mission);
+            const auto& receiver = *receivers.at(transfer.toPlanet);
+            mission.priority = receiver.priority;
+            const auto netConsumption = receiver.consumption - receiver.production;
+            if (netConsumption > 0)
+                mission.deadline = std::min(deadline, receiver.available / netConsumption);
+            missions.push_back(mission);
         }
+        return missions;
+    }
 
-        // Step 3: Assign spacecraft to delivery missions.
-        plan.scheduling = MissionScheduler::schedule(
-            plan.missions,
-            spacecraft,
-            galaxy
-        );
-
+    static LogisticsPlan createPlan(std::vector<ResourceDemand> demands,
+        std::vector<Spacecraft> spacecraft, const GalaxyGraph& galaxy,
+        ResourceType resourceType, double deadline, const RouteWeights& weights = {}) {
+        for (auto& demand : demands)
+            demand.type = resourceType; // This convenience entry point plans one resource.
+        LogisticsPlan plan;
+        plan.allocation = ResourceAllocator::allocateWithRoutes(demands, galaxy, weights);
+        plan.missions = createMissions(plan.allocation, demands, resourceType, deadline);
+        plan.scheduling = MissionScheduler::schedule(plan.missions, spacecraft, galaxy, weights);
         return plan;
     }
 };

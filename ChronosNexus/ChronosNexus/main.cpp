@@ -1,3 +1,6 @@
+#include "Benchmark.h"
+#include <stdexcept>
+#include <string>
 
 #include <iostream>
 #include <chrono>
@@ -65,6 +68,10 @@ void testCustomMissionScheduler() {
     route.from = 1;
     route.to = 2;
     route.distance = 20;
+    route.travelTime = route.distance;
+    route.fuelConsumption = route.distance;
+    route.maxCapacity = 1000;
+    route.reliability = 1;
     route.isAvailable = true;
     galaxy.addRoute(route);
 
@@ -109,7 +116,19 @@ void testCustomMissionScheduler() {
 }
 
 
-int main() {
+int main(int argc, char* argv[]) {
+    if (argc > 1) {
+        try {
+            if (argc == 2 && std::string(argv[1]) == "--self-test")
+                return runSelfTests();
+            if (std::string(argv[1]) != "--benchmark")
+                throw std::invalid_argument("Expected --benchmark SIZE SEED [MODE].");
+            return runBenchmark(argc, argv);
+        } catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            return 1;
+        }
+    }
 
     GalaxyGraph galaxy;
 
@@ -125,6 +144,10 @@ int main() {
         route.from = from;
         route.to = to;
         route.distance = distance;
+        route.travelTime = route.distance;
+        route.fuelConsumption = route.distance;
+        route.maxCapacity = 1000;
+        route.reliability = 1;
         route.isAvailable = true;
 
         galaxy.addRoute(route);
@@ -248,6 +271,10 @@ int main() {
     a.from = 1;
     a.to = 2;
     a.distance = 5;
+    a.travelTime = a.distance;
+    a.fuelConsumption = a.distance;
+    a.maxCapacity = 1000;
+    a.reliability = 1;
     a.fuelConsumption = 30;
     a.isAvailable = true;
     testGalaxy.addRoute(a);
@@ -257,6 +284,10 @@ int main() {
     b.from = 2;
     b.to = 3;
     b.distance = 5;
+    b.travelTime = b.distance;
+    b.fuelConsumption = b.distance;
+    b.maxCapacity = 1000;
+    b.reliability = 1;
     b.fuelConsumption = 30;
     b.isAvailable = true;
     testGalaxy.addRoute(b);
@@ -266,6 +297,10 @@ int main() {
     c.from = 1;
     c.to = 3;
     c.distance = 20;
+    c.travelTime = c.distance;
+    c.fuelConsumption = c.distance;
+    c.maxCapacity = 1000;
+    c.reliability = 1;
     c.fuelConsumption = 10;
     c.isAvailable = true;
     testGalaxy.addRoute(c);
@@ -331,6 +366,10 @@ int main() {
         route.from = from;
         route.to = to;
         route.distance = distance;
+        route.travelTime = route.distance;
+        route.fuelConsumption = route.distance;
+        route.maxCapacity = 1000;
+        route.reliability = 1;
         route.isAvailable = true;
         supplyGalaxy.addRoute(route);
         };
@@ -387,6 +426,10 @@ int main() {
             route.from = from;
             route.to = to;
             route.distance = distance;
+            route.travelTime = route.distance;
+            route.fuelConsumption = route.distance;
+            route.maxCapacity = 1000;
+            route.reliability = 1;
             route.isAvailable = true;
             missionGalaxy.addRoute(route);
         };
@@ -482,6 +525,10 @@ int main() {
     routeA.from = 1;
     routeA.to = 3;
     routeA.distance = 20;
+    routeA.travelTime = routeA.distance;
+    routeA.fuelConsumption = routeA.distance;
+    routeA.maxCapacity = 1000;
+    routeA.reliability = 1;
     routeA.isAvailable = true;
     logisticsGalaxy.addRoute(routeA);
 
@@ -490,6 +537,10 @@ int main() {
     routeB.from = 2;
     routeB.to = 3;
     routeB.distance = 10;
+    routeB.travelTime = routeB.distance;
+    routeB.fuelConsumption = routeB.distance;
+    routeB.maxCapacity = 1000;
+    routeB.reliability = 1;
     routeB.isAvailable = true;
     logisticsGalaxy.addRoute(routeB);
 
@@ -631,6 +682,10 @@ int main() {
     alternativeA.from = 2;
     alternativeA.to = 1;
     alternativeA.distance = 5;
+    alternativeA.travelTime = alternativeA.distance;
+    alternativeA.fuelConsumption = alternativeA.distance;
+    alternativeA.maxCapacity = 1000;
+    alternativeA.reliability = 1;
     alternativeA.isAvailable = true;
     rerouteGalaxy.addRoute(alternativeA);
 
@@ -669,6 +724,10 @@ int main() {
     slowAlternative.from = 2;
     slowAlternative.to = 1;
     slowAlternative.distance = 200;
+    slowAlternative.travelTime = slowAlternative.distance;
+    slowAlternative.fuelConsumption = slowAlternative.distance;
+    slowAlternative.maxCapacity = 1000;
+    slowAlternative.reliability = 1;
     slowAlternative.isAvailable = true;
     slowGalaxy.addRoute(slowAlternative);
 

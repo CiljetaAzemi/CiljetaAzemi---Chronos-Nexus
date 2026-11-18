@@ -17,6 +17,15 @@ struct SimulationResult {
     int eventsProcessed = 0;
     int unsupportedEvents = 0;
     int rerouted = 0;
+    int replans = 0;
+    double replanSeconds = 0;
+    long long nodesExplored = 0;
+    double distance = 0;
+    double fuel = 0;
+    double transportationCost = 0;
+    double risk = 0;
+    double waste = 0;
+    double stockoutAmount = 0;
 
     double deliveredAmount = 0.0;
     double remainingShortage = 0.0;
@@ -33,7 +42,10 @@ public:
         const std::vector<Mission>& missions,
         const std::vector<Spacecraft>& spacecraft,
         const SchedulingResult& schedule,
-        const std::vector<Event>& events
+        const std::vector<Event>& events,
+        const std::function<void(size_t)>& progress = {},
+        bool recheckAllDepartures = false,
+        double minimumHorizon = 0
     );
 };
 

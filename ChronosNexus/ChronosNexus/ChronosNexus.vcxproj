@@ -139,6 +139,7 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Benchmark.cpp" />
     <ClCompile Include="algorithms\Dijkstra.cpp" />
     <ClCompile Include="algorithms\InfrastructureOptimizer.cpp" />
     <ClCompile Include="algorithms\MissionScheduler.cpp" />
@@ -148,6 +149,7 @@
     <ClCompile Include="simulation\SimulationEngine.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Benchmark.h" />
     <ClInclude Include="algorithms\Dijkstra.h" />
     <ClInclude Include="algorithms\InfrastructureOptimizer.h" />
     <ClInclude Include="algorithms\LogisticsPlanner.h" />
