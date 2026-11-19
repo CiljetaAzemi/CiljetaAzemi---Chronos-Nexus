@@ -1,0 +1,3 @@
+Cache stress scarce_sparse: identical plan, 87 completed, 0 stock failures.
+Cache stress donor_production_cut: identical plan, 255 completed, 0 stock failures.
+Self-tests passed: route identity, capacity, fuel, overlap, reverse allocation, depletion, inventory, production events, and exact Knapsack.

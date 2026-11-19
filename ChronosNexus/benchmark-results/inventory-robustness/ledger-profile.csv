@@ -1,0 +1,4 @@
+"mode","departure_queries","reservation_trials","duplicate_departure_queries","duplicate_reservation_trials","ledger_seconds","reverse_graph_build_seconds","preserved_first_pass_assignments","engine_seconds","peak_working_set_bytes"
+"custom","0","0","0","0","0","0","2605","8.8749684999999996","56033280"
+"inventory","16574","39203","8274","23515","0.02042399999999258","0.027962600000000001","2157","16.809840099999999","64430080"
+"cached","16574","39203","8274","23515","0.019304299999991156","0.023179000000000002","2157","9.9886625000000002","65060864"

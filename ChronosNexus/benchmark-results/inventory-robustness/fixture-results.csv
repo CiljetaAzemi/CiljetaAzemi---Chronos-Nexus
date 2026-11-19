@@ -1,0 +1,11 @@
+scenario,inventory_mode,completed,failed,rejected,inventory_failures,delivered
+scarce_stock_competing,0,1,1,0,1,6
+scarce_stock_competing,1,1,0,1,0,6
+sparse_two_leg_chain,0,1,0,1,0,6
+sparse_two_leg_chain,1,2,0,0,0,12
+reverse_priority_three_leg,0,1,0,2,0,6
+reverse_priority_three_leg,1,2,0,1,0,12
+three_leg_feasible_witness,0,3,0,0,0,18
+three_leg_feasible_witness,1,3,0,0,0,18
+unannounced_production_cut,0,0,1,0,1,0
+unannounced_production_cut,1,0,1,0,1,0

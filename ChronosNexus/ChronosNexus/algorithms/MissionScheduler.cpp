@@ -4,8 +4,10 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -48,6 +50,48 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
     std::optional<InventoryReservations> reservations;
     if (inventory)
         reservations.emplace(inventory->balances);
+    // These independent limits bound both map overhead and allocated path storage.
+    constexpr size_t maxCachedRoutes = 12288;
+    constexpr size_t maxPathBytes = 2 * 1024 * 1024;
+    using RouteKey = std::tuple<int, int, double, double, double, double, double, double>;
+    std::map<RouteKey, PathResult> routes;
+    size_t pathBytes = 0;
+    auto cacheRevision = galaxy.revision();
+    auto findRoute = [&](const Mission& mission, const RouteWeights& w) {
+        auto search = [&] {
+            auto path = Dijkstra::findShortestPath(galaxy, mission.origin,
+                mission.destination, w, mission.cargoAmount);
+            result.nodesExplored += path.nodesExplored;
+            return path;
+        };
+        if (!inventory || !inventory->cacheRoutes || !std::isfinite(w.distance) ||
+            !std::isfinite(w.fuel) || !std::isfinite(w.time) ||
+            !std::isfinite(w.risk) || !std::isfinite(w.reliability))
+            return search();
+        if (cacheRevision != galaxy.revision()) {
+            routes.clear();
+            pathBytes = 0;
+            cacheRevision = galaxy.revision();
+            ++result.routeCacheInvalidations;
+        }
+        const RouteKey key{mission.origin, mission.destination, mission.cargoAmount,
+            w.distance, w.fuel, w.time, w.risk, w.reliability};
+        if (const auto hit = routes.find(key); hit != routes.end()) {
+            ++result.routeCacheHits;
+            return hit->second;
+        }
+        auto path = search();
+        const size_t remainingIds = (maxPathBytes - pathBytes) / sizeof(int);
+        if (routes.size() < maxCachedRoutes && path.path.capacity() <= remainingIds &&
+            path.routeIds.capacity() <= remainingIds - path.path.capacity()) {
+            const auto entry = routes.emplace(key, std::move(path)).first;
+            pathBytes += sizeof(int) * (entry->second.path.capacity() + entry->second.routeIds.capacity());
+            result.routeCachePeakEntries = std::max(result.routeCachePeakEntries, routes.size());
+            result.routeCachePeakPayloadBytes = std::max(result.routeCachePeakPayloadBytes, pathBytes);
+            return entry->second;
+        }
+        return path;
+    };
     std::unordered_map<int, int> missionCounts;
     std::unordered_map<int, int> shipCounts;
     for (const auto& mission : missions)
@@ -77,9 +121,7 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
         const auto origin = atLocation.find(mission.origin);
         if (origin == atLocation.end() || origin->second.empty())
             return false;
-        auto path = Dijkstra::findShortestPath(galaxy, mission.origin, mission.destination,
-            weights, mission.cargoAmount);
-        result.nodesExplored += path.nodesExplored;
+        auto path = findRoute(mission, weights);
         if (!path.found)
             return false;
 
@@ -135,9 +177,7 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
         if (winner == noShip) {
             // A lightweight feasibility fallback. It can miss routes between these extremes.
             for (const RouteWeights alternative : {RouteWeights{0, 1, 0}, RouteWeights{0, 0, 1}}) {
-                auto alternatePath = Dijkstra::findShortestPath(galaxy, mission.origin,
-                    mission.destination, alternative, mission.cargoAmount);
-                result.nodesExplored += alternatePath.nodesExplored;
+                auto alternatePath = findRoute(mission, alternative);
                 consider(alternatePath, alternative);
             }
         }
@@ -179,6 +219,7 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
             if (demand.available > demand.required)
                 donors[demand.type].insert(demand.planetId);
         std::optional<GalaxyGraph> reverse;
+        std::uint64_t reverseRevision = 0;
 
         // Try one append-only insertion pass. Existing ship assignments and times stay fixed.
         for (const auto* mission : retry) {
@@ -187,8 +228,10 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
             ++processed;
             bool recovered = assign(*mission);
             if (!recovered && aidIds.contains(mission->id) && donors.contains(mission->cargoType)) {
-                if (!reverse)
+                if (!reverse || reverseRevision != galaxy.revision()) {
                     reverse.emplace(galaxy.reversed());
+                    reverseRevision = galaxy.revision();
+                }
                 const auto& candidates = donors.at(mission->cargoType);
                 std::unordered_set<int> tried{mission->origin, mission->destination};
                 for (int attempt = 0; attempt < 4 && !recovered; ++attempt) {

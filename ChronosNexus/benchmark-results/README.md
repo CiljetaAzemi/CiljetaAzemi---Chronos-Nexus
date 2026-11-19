@@ -77,3 +77,20 @@ The [runner](../Run-Benchmarks.ps1) writes CSV rows, progress markers, and per-r
 ## Limitations
 
 These are single-seed, single-run observations. Timing differences, especially at subsecond durations, do not establish repeatable speedups. Ordinary synthetic disruptions had limited impact on selected routes. The stress case intentionally targets selected edges and does not measure fleet-wide or inventory replanning. The workload does not establish performance on unseen competition scenarios, and the reported score uses the experimental weights defined in the technical report.
+
+## Inventory-aware route-cache evaluation
+
+The opt-in `inventory` mode uses bounded forward-route caching. The `inventory-uncached` control runs the same inventory-aware scheduler without route reuse. The comparison uses paired scenarios with seeds `20261118`, `42`, `1729`, `8675309`, and `314159` on small and medium, and the first three seeds on large. The solver records exact assignments, rejections, and recoveries after the engine-time and peak-memory measurements. The [paired measurements](inventory-cache/results.csv) and [equivalence checks](inventory-cache/equivalence.csv) record the comparison.
+
+All 13 pairs had identical decision traces and simulation outcomes. On large, mean engine time decreased from 25.61 s to 14.90 s, and mean graph expansions decreased from 22.19 million to 12.51 million. Mean peak working set increased from 58.43 MiB to 60.94 MiB. These are single paired observations per seed.
+
+Run the following from the repository root to reproduce the paired matrix.
+
+```powershell
+foreach ($seed in 20261118, 42, 1729, 8675309, 314159) {
+    $sizes = if ($seed -in 20261118, 42, 1729) { 'small', 'medium', 'large' } else { 'small', 'medium' }
+    .\ChronosNexus\Run-Benchmarks.ps1 -Sizes $sizes -Seed $seed -Modes inventory-uncached,inventory -TracePlan -TimeoutSeconds 120 -OutputDirectory .\x64\reproduction\inventory-cache
+}
+```
+
+Inventory-aware planning remains opt-in. In the preceding [scarcity stress comparison](inventory-robustness/stress-results.csv), reducing initial stock to 40% and retaining 139 ships increased timely fulfillment from 5.99% to 9.84% under inventory-aware scheduling, while ending shortage rose from 5,410 to 5,623.52 units. Exact route reuse preserves the policy's decisions, including this trade-off. Future evaluations should consider timely fulfillment, ending shortage and fuel jointly, especially when additional departures compete with suppliers' retained stock.

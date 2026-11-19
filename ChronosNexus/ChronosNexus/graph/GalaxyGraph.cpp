@@ -1,10 +1,18 @@
 #include "GalaxyGraph.h"
 
 #include <cmath>
+#include <atomic>
 #include <stdexcept>
 
+void GalaxyGraph::markChanged() {
+    // Copies retain the revision of their contents. Diverging copies get distinct revisions.
+    static std::atomic<std::uint64_t> nextRevision{0};
+    routeRevision = nextRevision.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
 void GalaxyGraph::addLocation(int locationId) {
-    adjacencyList.try_emplace(locationId);
+    if (adjacencyList.try_emplace(locationId).second)
+        markChanged();
 }
 
 void GalaxyGraph::addRoute(const Route& route) {
@@ -15,6 +23,7 @@ void GalaxyGraph::addRoute(const Route& route) {
     auto& routes = adjacencyList.at(route.from);
     routeIndex.emplace(route.id, std::make_pair(route.from, routes.size()));
     routes.push_back(route);
+    markChanged();
 }
 
 const std::vector<Route>& GalaxyGraph::getRoutes(int locationId) const {
@@ -50,7 +59,11 @@ bool GalaxyGraph::blockRoute(int routeId) {
     auto index = routeIndex.find(routeId);
     if (index == routeIndex.end())
         return false;
-    adjacencyList.at(index->second.first)[index->second.second].isAvailable = false;
+    auto& route = adjacencyList.at(index->second.first)[index->second.second];
+    if (route.isAvailable) {
+        route.isAvailable = false;
+        markChanged();
+    }
     return true;
 }
 
@@ -58,7 +71,11 @@ bool GalaxyGraph::unblockRoute(int routeId) {
     auto index = routeIndex.find(routeId);
     if (index == routeIndex.end())
         return false;
-    adjacencyList.at(index->second.first)[index->second.second].isAvailable = true;
+    auto& route = adjacencyList.at(index->second.first)[index->second.second];
+    if (!route.isAvailable) {
+        route.isAvailable = true;
+        markChanged();
+    }
     return true;
 }
 
@@ -66,6 +83,10 @@ bool GalaxyGraph::updateRouteRisk(int routeId, double newRisk) {
     auto index = routeIndex.find(routeId);
     if (index == routeIndex.end() || !std::isfinite(newRisk) || newRisk < 0 || newRisk > 1)
         return false;
-    adjacencyList.at(index->second.first)[index->second.second].risk = newRisk;
+    auto& route = adjacencyList.at(index->second.first)[index->second.second];
+    if (route.risk != newRisk) {
+        route.risk = newRisk;
+        markChanged();
+    }
     return true;
 }

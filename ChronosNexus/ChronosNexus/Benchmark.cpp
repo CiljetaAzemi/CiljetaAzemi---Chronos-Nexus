@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <iomanip>
+#include <tuple>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -250,19 +252,20 @@ void addStressClosures(const SchedulingResult& schedule, std::vector<Event>& eve
 }
 
 int runBenchmark(int argc, char* argv[]) {
-    if (argc < 4 || argc > 5)
+    if (argc < 4 || argc > 6 || (argc == 6 && std::string(argv[5]) != "--trace-plan"))
         throw std::invalid_argument(
-            "Usage: --benchmark SIZE SEED [custom|earliest|basic|all-routes|greedy-build|stress|stress-all-routes|inventory]");
+            "Usage: --benchmark SIZE SEED [MODE [--trace-plan]] (inventory or inventory-uncached for Phase 1)");
     const std::string name = argv[2];
     const auto size = dimensions(name);
     size_t consumed = 0;
     const auto seed = std::stoul(argv[3], &consumed);
     if (consumed != std::string(argv[3]).size() || seed > 0xffffffffUL || argv[3][0] == '-')
         throw std::invalid_argument("Seed must be an unsigned 32-bit integer.");
-    const std::string mode = argc == 5 ? argv[4] : "custom";
+    const std::string mode = argc >= 5 ? argv[4] : "custom";
+    const bool inventoryMode = mode == "inventory" || mode == "inventory-uncached";
     if (mode != "custom" && mode != "earliest" && mode != "basic" &&
         mode != "all-routes" && mode != "greedy-build" &&
-        mode != "stress" && mode != "stress-all-routes" && mode != "inventory")
+        mode != "stress" && mode != "stress-all-routes" && !inventoryMode)
         throw std::invalid_argument("Unknown benchmark mode.");
 
     const auto started = Clock::now();
@@ -305,10 +308,10 @@ int runBenchmark(int argc, char* argv[]) {
               << aid.size() << " aid proposals.\n";
 
     report("scheduling", 0, 0, true);
-    const InventoryPlanningInput planning{data.inventory, data.aidDemands, aid};
+    const InventoryPlanningInput planning{data.inventory, data.aidDemands, aid, mode == "inventory"};
     const auto schedule = MissionScheduler::schedule(data.missions, data.ships, data.graph,
         weights, mode == "earliest", [&](size_t count) { report("scheduling", 0, count); },
-        mode == "inventory" ? &planning : nullptr);
+        inventoryMode ? &planning : nullptr);
     // Alternative suppliers change the source, while obligation ID, quantity and deadline stay fixed.
     for (auto& mission : data.missions)
         if (const auto source = schedule.revisedOrigins.find(mission.id);
@@ -409,6 +412,34 @@ int runBenchmark(int argc, char* argv[]) {
         std::cout << "MEMORY," << memory.PeakWorkingSetSize << std::endl;
     }
 #endif
+    if (inventoryMode)
+        std::cout << "CACHE," << schedule.routeCacheHits << ',' << schedule.routeCachePeakEntries
+                  << ',' << schedule.routeCachePeakPayloadBytes << ',' << schedule.routeCacheInvalidations << '\n';
+    // Trace after timing and memory measurements. Hex floats preserve exact decision values.
+    if (argc == 6) {
+        std::cout << std::hexfloat;
+        for (const auto& entry : schedule.scheduled) {
+            const auto& w = entry.weights;
+            std::cout << "PLAN,assigned," << entry.missionId << ',' << entry.spacecraftId << ','
+                << entry.departureTime << ',' << entry.arrivalTime << ',' << entry.fuelUsed << ','
+                << w.distance << ',' << w.fuel << ',' << w.time << ',' << w.risk << ',' << w.reliability;
+            if (const auto source = schedule.revisedOrigins.find(entry.missionId);
+                source != schedule.revisedOrigins.end())
+                std::cout << ",supplier=" << source->second;
+            std::cout << ",vertices";
+            for (int vertex : entry.path)
+                std::cout << ',' << vertex;
+            std::cout << ",edges";
+            for (int edge : entry.routeIds)
+                std::cout << ',' << edge;
+            std::cout << '\n';
+        }
+        for (int id : schedule.rejectedMissionIds)
+            std::cout << "PLAN,rejected," << id << '\n';
+        for (int id : schedule.recoveredMissionIds)
+            std::cout << "PLAN,recovered," << id << '\n';
+        std::cout << std::defaultfloat;
+    }
     return 0;
 }
 
@@ -571,6 +602,136 @@ int runSelfTests() {
     require(supplierPlan.revisedOrigins.at(alternativeAid.id) == 1 &&
         supplierPlan.recoveredMissionIds.size() == 1 && supplierPlan.missionsScheduled == 1,
         "A rejected aid obligation can retain its identity while changing supplier.");
+
+    auto changedGraph = graph;
+    std::vector<Mission> repeated(4, first);
+    std::vector<Spacecraft> fleet(4, ship);
+    for (size_t i = 0; i < repeated.size(); ++i) {
+        repeated[i].id = static_cast<int>(i + 1);
+        repeated[i].deadline = 8;
+        fleet[i].id = static_cast<int>(i + 1);
+    }
+    const std::vector<ResourceDemand> stocked{{1, 60, 0, 1}, {2, 0, 0, 1}};
+    const InventoryPlanningInput stockedPlan{stocked, stocked, noAid};
+    const auto afterUpdates = MissionScheduler::schedule(repeated, fleet, changedGraph,
+        {1, 0, 0, 10}, false, [&](size_t i) {
+            if (i == 1) {
+                changedGraph.blockRoute(1);
+                changedGraph.blockRoute(2);
+            } else if (i == 2) {
+                changedGraph.unblockRoute(1);
+                changedGraph.unblockRoute(2);
+            } else if (i == 3) {
+                changedGraph.updateRouteRisk(1, 1);
+            } else if (i == 4) {
+                Route shortcut = *changedGraph.findRoute(2);
+                shortcut.id = 77;
+                shortcut.distance = shortcut.travelTime = 0.5;
+                changedGraph.addRoute(shortcut);
+            }
+        }, &stockedPlan);
+    require(afterUpdates.routeCacheInvalidations == 4 &&
+        afterUpdates.scheduled.size() == 4 &&
+        afterUpdates.scheduled[0].routeIds == std::vector<int>{1} &&
+        afterUpdates.scheduled[1].missionId == 3 &&
+        afterUpdates.scheduled[1].routeIds == std::vector<int>{1} &&
+        afterUpdates.scheduled[2].routeIds == std::vector<int>{2} &&
+        afterUpdates.scheduled[3].routeIds == std::vector<int>{77} &&
+        afterUpdates.recoveredMissionIds == std::vector<int>{2},
+        "Closure, reopening, risk changes, and new edges must invalidate cached searches.");
+
+    auto samePlan = [&](const SchedulingResult& a, const SchedulingResult& b) {
+        require(a.rejectedMissionIds == b.rejectedMissionIds &&
+            a.recoveredMissionIds == b.recoveredMissionIds && a.revisedOrigins == b.revisedOrigins &&
+            a.scheduled.size() == b.scheduled.size(), "Cache changed mission decisions.");
+        auto fields = [](const ScheduledMission& m) {
+            const auto& w = m.weights;
+            return std::tie(m.missionId, m.spacecraftId, m.departureTime, m.arrivalTime,
+                m.fuelUsed, m.path, m.routeIds, w.distance, w.fuel, w.time, w.risk, w.reliability);
+        };
+        for (size_t i = 0; i < a.scheduled.size(); ++i)
+            require(fields(a.scheduled[i]) == fields(b.scheduled[i]),
+                "Cache changed an exact assignment field.");
+        require(b.routeCachePeakEntries <= 12288 && b.routeCachePeakPayloadBytes <= 2 * 1024 * 1024,
+            "Route cache exceeded its bound.");
+    };
+    const InventoryPlanningInput uncachedChain{chainBalances, chainBalances, noAid, false};
+    first.deadline = 8;
+    samePlan(MissionScheduler::schedule({first, second}, {ship}, graph, {}, false, {}, &uncachedChain),
+        chainPlan);
+    samePlan(MissionScheduler::schedule({first, competing}, {ship, secondShip}, graph,
+        {}, false, {}, &uncachedChain), competingPlan);
+
+    edge(5, 3, 4, 1, 1, 20);
+    auto third = second;
+    third.id = 3;
+    third.origin = 3;
+    third.destination = 4;
+    third.priority = second.priority + 1;
+    auto longChainBalances = chainBalances;
+    longChainBalances.push_back({4, 0, 0, 1});
+    const InventoryPlanningInput longChainCached{longChainBalances, longChainBalances, noAid};
+    const InventoryPlanningInput longChainUncached{longChainBalances, longChainBalances, noAid, false};
+    const auto longChain = MissionScheduler::schedule({first, second, third}, {ship}, graph,
+        {}, false, {}, &longChainCached);
+    samePlan(MissionScheduler::schedule({first, second, third}, {ship}, graph,
+        {}, false, {}, &longChainUncached), longChain);
+    require(longChain.missionsScheduled == 2, "Cache changed the bounded three-leg retry outcome.");
+
+    const InventoryPlanningInput uncachedProduction{productionBalances, productionBalances, noAid, false};
+    first.deadline = 3;
+    samePlan(MissionScheduler::schedule({first}, {ship}, graph, {}, false, {}, &uncachedProduction),
+        delayed);
+    auto surpriseCut = shock;
+    surpriseCut.eventTime = 1;
+    surpriseCut.severity = 1;
+    require(SimulationEngine::run(graph, productionBalances, {first}, {ship}, delayed,
+        {surpriseCut}).inventoryFailures == 1,
+        "A production shock can still invalidate a nominal reservation.");
+
+    for (const std::string scenario : {"scarce_sparse", "donor_production_cut"}) {
+        auto data = generate(dimensions("medium"), 42);
+        data.events.clear();
+        if (scenario == "scarce_sparse") {
+            for (auto& balance : data.inventory)
+                balance.available = std::floor(0.4 * balance.available);
+            for (auto& demand : data.aidDemands)
+                demand.available = std::floor(0.4 * demand.available);
+            std::erase_if(data.ships, [](const auto& candidate) { return candidate.id % 3 != 0; });
+        } else {
+            for (const auto& demand : data.aidDemands) {
+                if (demand.available <= demand.required)
+                    continue;
+                Event cut;
+                cut.eventType = EventType::ResourceProductionDecrease;
+                cut.affectedObjectId = demand.planetId;
+                cut.eventTime = 1;
+                cut.severity = 1;
+                data.events.push_back(cut);
+            }
+        }
+        const RouteWeights stressWeights{0.02, 0.03, 0.5, 3.0, 2.0};
+        const auto allocation = ResourceAllocator::allocateWithRoutes(data.aidDemands, data.graph, stressWeights);
+        const auto obligations = LogisticsPlanner::createMissions(allocation, data.aidDemands,
+            ResourceType::Food, 24, 500);
+        data.missions.insert(data.missions.end(), obligations.begin(), obligations.end());
+        const InventoryPlanningInput uncached{data.inventory, data.aidDemands, obligations, false};
+        const InventoryPlanningInput cached{data.inventory, data.aidDemands, obligations};
+        const auto before = MissionScheduler::schedule(data.missions, data.ships,
+            data.graph, stressWeights, false, {}, &uncached);
+        const auto after = MissionScheduler::schedule(data.missions, data.ships,
+            data.graph, stressWeights, false, {}, &cached);
+        samePlan(before, after);
+        for (auto& mission : data.missions)
+            if (const auto source = after.revisedOrigins.find(mission.id); source != after.revisedOrigins.end())
+                mission.origin = source->second;
+        const auto executed = SimulationEngine::run(data.graph, data.inventory, data.missions,
+            data.ships, after, data.events, {}, false, 30);
+        require(executed.completed == (scenario == "scarce_sparse" ? 87 : 255),
+            "Stress execution diverged from the verified inventory-plan outcome.");
+        std::cout << "Cache stress " << scenario << ": identical plan, " << executed.completed
+                  << " completed, " << executed.inventoryFailures << " stock failures.\n";
+    }
 
     std::vector<Infrastructure> projects(4);
     const int costs[] = {40, 50, 60, 30};

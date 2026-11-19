@@ -28,12 +28,17 @@ struct SchedulingResult {
     std::vector<int> recoveredMissionIds;
     std::unordered_map<int, int> revisedOrigins;
     long long reservationChecks = 0;
+    size_t routeCacheHits = 0;
+    size_t routeCachePeakEntries = 0;
+    size_t routeCachePeakPayloadBytes = 0;
+    size_t routeCacheInvalidations = 0;
 };
 
 struct InventoryPlanningInput {
     const std::vector<ResourceDemand>& balances;
     const std::vector<ResourceDemand>& aidNetwork;
     const std::vector<Mission>& aidMissions;
+    bool cacheRoutes = true;
 };
 
 class MissionScheduler {

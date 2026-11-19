@@ -4,13 +4,14 @@ param(
     [ValidateSet('small', 'medium', 'large', 'extreme')]
     [string[]]$Sizes = @('small', 'medium', 'large', 'extreme'),
     [uint32]$Seed = 20261118,
-    [ValidateSet('custom', 'earliest', 'basic', 'all-routes', 'greedy-build', 'stress', 'stress-all-routes', 'inventory')]
+    [ValidateSet('custom', 'earliest', 'basic', 'all-routes', 'greedy-build', 'stress', 'stress-all-routes', 'inventory', 'inventory-uncached')]
     [string[]]$Modes = @('custom'),
     [ValidateRange(1, 86400)]
     [int]$TimeoutSeconds = 600,
     [ValidateRange(64, 1048576)]
     [int]$MemoryMiB = 1024,
-    [string]$OutputDirectory = "$PSScriptRoot\benchmark-results"
+    [string]$OutputDirectory = "$PSScriptRoot\benchmark-results",
+    [switch]$TracePlan
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,7 +31,7 @@ $qualityFields = @(
     'weighted_timely_cargo', 'weighted_demand', 'weighted_timely_aid', 'weighted_aid_demand',
     'reservation_checks'
 )
-$includeQuality = $Modes -contains 'inventory'
+$includeQuality = $Modes -contains 'inventory' -or $Modes -contains 'inventory-uncached'
 $dimensions = @{
     small = 100, 500, 50
     medium = 1000, 10000, 500
@@ -50,7 +51,9 @@ foreach ($size in $Sizes) {
         Write-Host "Starting $id (limit $TimeoutSeconds s, $MemoryMiB MiB working set)"
         $process = $null
         try {
-            $process = Start-Process -FilePath $exe -ArgumentList @('--benchmark', $size, "$Seed", $mode) `
+            $arguments = @('--benchmark', $size, "$Seed", $mode)
+            if ($TracePlan) { $arguments += '--trace-plan' }
+            $process = Start-Process -FilePath $exe -ArgumentList $arguments `
                 -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -WindowStyle Hidden
             $null = $process.Handle
             while ($true) {
@@ -143,7 +146,7 @@ foreach ($size in $Sizes) {
             }
         }
         [pscustomobject]$row | Export-Csv -LiteralPath $csv -Append -NoTypeInformation
-        $lines | Where-Object { $_ -notmatch '^(PROGRESS|RESULT|MEMORY),' } | Write-Host
+        $lines | Where-Object { $_ -notmatch '^(PROGRESS|RESULT|MEMORY|PLAN),' } | Write-Host
         Write-Host "$id -> $status (stage $($row.last_stage), peak $($row.peak_working_set_bytes) bytes)"
     }
 }

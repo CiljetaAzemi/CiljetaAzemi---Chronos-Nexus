@@ -57,7 +57,15 @@ The weights define an experimental trade-off. Mission completion, cargo delivery
 
 The recorded comparisons show higher delivered quantity for route-aware allocation on all three completed sizes and modest completion gains for the custom scheduler on medium and large. Conditional route repair reduced the number of route searches under paired closures while preserving the measured delivery and completion outcomes. Scheduling dominated the large run and was the stage at which extreme timed out. Detailed values, evidence, and run commands are in the [experimental evaluation](ChronosNexus/benchmark-results/README.md).
 
-The current method can miss feasible routes outside its tested route set. It does not reposition or refuel ships, reserve cargo during scheduling, or reassign missions after ship loss. Route closures affect pending departures, and supply shocks change inventories without creating new missions during execution. Aid deadlines use initial depletion estimates. Edge reliability influences ranking, while independent travel-time and failure variability is outside the current simulation. Construction production effects are modeled, while population and energy impacts are outside the evaluation. The next quality evaluation should test inventory-aware scheduling on fixed demand obligations before comparing broader plan-improvement methods.
+The current method can miss feasible routes outside its tested route set. It does not reposition or refuel ships, or reassign missions after ship loss. Route closures affect pending departures, and supply shocks change inventories without creating new missions during execution. Aid deadlines use initial depletion estimates. Edge reliability influences ranking, while independent travel-time and failure variability is outside the current simulation. Construction production effects are modeled, while population and energy impacts are outside the evaluation.
+
+### Optional inventory-aware scheduling
+
+The `inventory` mode reserves stock against nominal production, consumption, and committed deliveries. One append-only retry pass can recover rejected missions and test up to four alternative suppliers for an aid obligation. The `custom` mode remains the default. Use `inventory-uncached` to isolate the effect of route reuse.
+
+Inventory-aware scheduling can improve timely service while increasing aggregate ending shortage when stock and ships are scarce. It does not protect a supplier's target stock as a hard reserve, revise previously accepted assignments, or recover every dependent chain in a single retry pass. Unexpected production cuts can invalidate nominal reservations. Subsequent optimization should evaluate completion, weighted timely fulfillment, ending shortages, and fuel together on fixed obligations.
+
+The optional mode caches exact forward shortest-path results within one planning call. The key includes endpoints, cargo, and all route weights. The cache admits up to 12,288 entries with a combined 2 MiB limit on allocated path-vector payload. Container and entry overhead are separately bounded by the entry limit. Changes to graph topology, route availability, or risk invalidate the cache. Reverse supplier searches remain live because their eligible donors depend on current ship locations.
 
 ## Build and reproduce
 
