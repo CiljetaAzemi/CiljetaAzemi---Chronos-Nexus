@@ -17,6 +17,7 @@ struct SimulationResult {
     int eventsProcessed = 0;
     int unsupportedEvents = 0;
     int rerouted = 0;
+    int inventoryFailures = 0;
     int replans = 0;
     double replanSeconds = 0;
     long long nodesExplored = 0;
@@ -32,6 +33,8 @@ struct SimulationResult {
 
     std::unordered_map<int, double> finalResources;
     std::unordered_map<int, MissionStatus> missionStatuses;
+    struct Delivery { double amount; double arrival; };
+    std::unordered_map<int, Delivery> deliveries;
 };
 
 class SimulationEngine {

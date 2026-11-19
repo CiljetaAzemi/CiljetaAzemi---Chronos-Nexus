@@ -4,7 +4,7 @@ param(
     [ValidateSet('small', 'medium', 'large', 'extreme')]
     [string[]]$Sizes = @('small', 'medium', 'large', 'extreme'),
     [uint32]$Seed = 20261118,
-    [ValidateSet('custom', 'earliest', 'basic', 'all-routes', 'greedy-build', 'stress', 'stress-all-routes')]
+    [ValidateSet('custom', 'earliest', 'basic', 'all-routes', 'greedy-build', 'stress', 'stress-all-routes', 'inventory')]
     [string[]]$Modes = @('custom'),
     [ValidateRange(1, 86400)]
     [int]$TimeoutSeconds = 600,
@@ -25,6 +25,12 @@ $fields = @(
     'construction_cost', 'construction_value', 'construction_seconds', 'civilization_score',
     'engine_seconds', 'average_replan_seconds'
 )
+$qualityFields = @(
+    'recovered_scheduled', 'recovered_completed', 'revised_suppliers', 'inventory_failures',
+    'weighted_timely_cargo', 'weighted_demand', 'weighted_timely_aid', 'weighted_aid_demand',
+    'reservation_checks'
+)
+$includeQuality = $Modes -contains 'inventory'
 $dimensions = @{
     small = 100, 500, 50
     medium = 1000, 10000, 500
@@ -97,8 +103,12 @@ foreach ($size in $Sizes) {
         }
         $last = ($lines | Where-Object { $_ -like 'PROGRESS,*' } | Select-Object -Last 1) -split ','
         $result = ($lines | Where-Object { $_ -like 'RESULT,*' } | Select-Object -Last 1) -split ','
+        $quality = ($lines | Where-Object { $_ -like 'QUALITY,*' } | Select-Object -Last 1) -split ','
         if ($status -eq 'complete' -and $result.Count -ne ($fields.Count + 1)) {
             $status = 'missing_result'
+        }
+        if ($status -eq 'complete' -and $includeQuality -and $quality.Count -ne ($qualityFields.Count + 1)) {
+            $status = 'missing_quality'
         }
         $counts = $dimensions[$size]
         $row = [ordered]@{
@@ -126,6 +136,11 @@ foreach ($size in $Sizes) {
         }
         for ($i = 0; $i -lt $fields.Count; ++$i) {
             $row[$fields[$i]] = if ($status -eq 'complete') { $result[$i + 1] } else { 'NA' }
+        }
+        if ($includeQuality) {
+            for ($i = 0; $i -lt $qualityFields.Count; ++$i) {
+                $row[$qualityFields[$i]] = if ($status -eq 'complete') { $quality[$i + 1] } else { 'NA' }
+            }
         }
         [pscustomobject]$row | Export-Csv -LiteralPath $csv -Append -NoTypeInformation
         $lines | Where-Object { $_ -notmatch '^(PROGRESS|RESULT|MEMORY),' } | Write-Host

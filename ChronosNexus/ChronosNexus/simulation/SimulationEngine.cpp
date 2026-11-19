@@ -167,6 +167,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             const double accepted = std::min(mission.cargoAmount, destination.storage - destination.stock);
             destination.stock += accepted;
             result.deliveredAmount += accepted;
+            result.deliveries.emplace(mission.id, SimulationResult::Delivery{accepted, now});
             result.waste += mission.cargoAmount - accepted;
             status = MissionStatus::Completed;
             ++result.completed;
@@ -176,8 +177,12 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         if (status != MissionStatus::Scheduled)
             continue;
         const auto origin = balances.find(mission.origin);
-        if (shipIt == ships.end() || disabled.contains(entry.spacecraftId) ||
-            origin == balances.end() || !origin->second.contains(mission.cargoType)) {
+        if (shipIt == ships.end() || disabled.contains(entry.spacecraftId)) {
+            fail();
+            continue;
+        }
+        if (origin == balances.end() || !origin->second.contains(mission.cargoType)) {
+            ++result.inventoryFailures;
             fail();
             continue;
         }
@@ -196,6 +201,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         auto& stock = origin->second.at(mission.cargoType);
         stock.advance(now, result);
         if (stock.stock < mission.cargoAmount) {
+            ++result.inventoryFailures;
             fail();
             continue;
         }

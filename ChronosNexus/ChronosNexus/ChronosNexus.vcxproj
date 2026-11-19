@@ -150,6 +150,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Benchmark.h" />
+    <ClInclude Include="algorithms\InventoryReservations.h" />
     <ClInclude Include="algorithms\Dijkstra.h" />
     <ClInclude Include="algorithms\InfrastructureOptimizer.h" />
     <ClInclude Include="algorithms\LogisticsPlanner.h" />

@@ -15,6 +15,7 @@
 #endif
 
 #include "algorithms/InfrastructureOptimizer.h"
+#include "algorithms/InventoryReservations.h"
 #include "algorithms/LogisticsPlanner.h"
 #include "models/Colony.h"
 #include "models/Station.h"
@@ -251,7 +252,7 @@ void addStressClosures(const SchedulingResult& schedule, std::vector<Event>& eve
 int runBenchmark(int argc, char* argv[]) {
     if (argc < 4 || argc > 5)
         throw std::invalid_argument(
-            "Usage: --benchmark SIZE SEED [custom|earliest|basic|all-routes|greedy-build|stress|stress-all-routes]");
+            "Usage: --benchmark SIZE SEED [custom|earliest|basic|all-routes|greedy-build|stress|stress-all-routes|inventory]");
     const std::string name = argv[2];
     const auto size = dimensions(name);
     size_t consumed = 0;
@@ -261,7 +262,7 @@ int runBenchmark(int argc, char* argv[]) {
     const std::string mode = argc == 5 ? argv[4] : "custom";
     if (mode != "custom" && mode != "earliest" && mode != "basic" &&
         mode != "all-routes" && mode != "greedy-build" &&
-        mode != "stress" && mode != "stress-all-routes")
+        mode != "stress" && mode != "stress-all-routes" && mode != "inventory")
         throw std::invalid_argument("Unknown benchmark mode.");
 
     const auto started = Clock::now();
@@ -304,8 +305,15 @@ int runBenchmark(int argc, char* argv[]) {
               << aid.size() << " aid proposals.\n";
 
     report("scheduling", 0, 0, true);
+    const InventoryPlanningInput planning{data.inventory, data.aidDemands, aid};
     const auto schedule = MissionScheduler::schedule(data.missions, data.ships, data.graph,
-        weights, mode == "earliest", [&](size_t count) { report("scheduling", 0, count); });
+        weights, mode == "earliest", [&](size_t count) { report("scheduling", 0, count); },
+        mode == "inventory" ? &planning : nullptr);
+    // Alternative suppliers change the source, while obligation ID, quantity and deadline stay fixed.
+    for (auto& mission : data.missions)
+        if (const auto source = schedule.revisedOrigins.find(mission.id);
+            source != schedule.revisedOrigins.end())
+            mission.origin = source->second;
     if (!schedule.scheduled.empty()) {
         const auto& first = schedule.scheduled.front();
         std::cout << "First assignment: mission " << first.missionId << ", ship " << first.spacecraftId
@@ -341,6 +349,28 @@ int runBenchmark(int argc, char* argv[]) {
         5.0 * schedule.rejectedMissionIds.size() + actual.deliveredAmount -
         actual.remainingShortage - actual.stockoutAmount - actual.waste -
         0.01 * actual.transportationCost - actual.risk + construction.totalStrategicValue;
+    double weightedDemand = 0;
+    double weightedTimely = 0;
+    double weightedAidDemand = 0;
+    double weightedTimelyAid = 0;
+    for (const auto& mission : data.missions) {
+        const bool isAid = mission.id >= size.missions;
+        const double demand = mission.priority * mission.cargoAmount;
+        weightedDemand += demand;
+        if (isAid)
+            weightedAidDemand += demand;
+        const auto delivery = actual.deliveries.find(mission.id);
+        if (delivery != actual.deliveries.end() && delivery->second.arrival <= mission.deadline) {
+            const double fulfilled = mission.priority * delivery->second.amount;
+            weightedTimely += fulfilled;
+            if (isAid)
+                weightedTimelyAid += fulfilled;
+        }
+    }
+    const auto recoveredCompleted = std::count_if(schedule.recoveredMissionIds.begin(),
+        schedule.recoveredMissionIds.end(), [&](int id) {
+            return actual.missionStatuses.at(id) == MissionStatus::Completed;
+        });
     std::cout << "Plan: " << aid.size() << " aid proposals, " << schedule.missionsScheduled
               << " assignments, " << schedule.rejectedMissionIds.size() << " rejected, "
               << construction.selectedInfrastructureIds.size() << " construction decisions\n"
@@ -355,6 +385,10 @@ int runBenchmark(int argc, char* argv[]) {
               << allocation.nodesExplored + schedule.nodesExplored + actual.nodesExplored
               << " graph nodes expanded, " << schedule.candidates << " ship-route checks, "
               << actual.replans << " route recomputations in " << actual.replanSeconds << " seconds\n";
+    std::cout << "QUALITY," << schedule.recoveredMissionIds.size() << ',' << recoveredCompleted << ','
+              << schedule.revisedOrigins.size() << ',' << actual.inventoryFailures << ','
+              << weightedTimely << ',' << weightedDemand << ',' << weightedTimelyAid << ','
+              << weightedAidDemand << ',' << schedule.reservationChecks << std::endl;
     std::cout << "RESULT," << allocation.totalDelivered << ',' << schedule.missionsScheduled
               << ',' << schedule.rejectedMissionIds.size() << ',' << actual.completed << ','
               << actual.failed << ',' << actual.deliveredAmount << ',' << actual.remainingShortage
@@ -481,6 +515,62 @@ int runSelfTests() {
         medicineSchedule, {});
     require(missingMedicine.failed == 1 && missingMedicine.deliveredAmount == 0,
         "Food stock cannot satisfy a medicine mission.");
+
+    first.cargoType = ResourceType::Food;
+    second.priority = first.priority + 1;
+    const std::vector<ResourceDemand> chainBalances{{1, 6, 0, 1}, {2, 0, 0, 1}, {3, 0, 0, 1}};
+    const std::vector<Mission> noAid;
+    const InventoryPlanningInput chainPlanning{chainBalances, chainBalances, noAid};
+    const auto chainPlan = MissionScheduler::schedule({first, second}, {ship}, graph,
+        {}, false, {}, &chainPlanning);
+    const auto chainRun = SimulationEngine::run(graph, chainBalances, {first, second},
+        {ship}, chainPlan, {});
+    // Two obligations is the upper bound. The only feasible order is 1 then 2.
+    require(chainRun.completed == 2 && chainRun.inventoryFailures == 0 &&
+        chainPlan.recoveredMissionIds == std::vector<int>{second.id},
+        "The second pass must recover the chain using the first delivery as inventory.");
+
+    auto competing = first;
+    competing.id = 9;
+    auto secondShip = ship;
+    secondShip.id = 2;
+    const auto competingPlan = MissionScheduler::schedule({first, competing}, {ship, secondShip},
+        graph, {}, false, {}, &chainPlanning);
+    const auto competingRun = SimulationEngine::run(graph, chainBalances, {first, competing},
+        {ship, secondShip}, competingPlan, {});
+    // A common source has six units and each obligation requires six, so the exact optimum is one.
+    require(competingPlan.rejectedMissionIds.size() == 1 && competingRun.completed == 1 &&
+        competingRun.inventoryFailures == 0, "Concurrent withdrawals cannot reserve the same cargo.");
+
+    const std::vector<ResourceDemand> productionBalances{
+        {1, 0, 0, 1, ResourceType::Food, 5, 2, 20}, {2, 0, 0, 1}, {3, 0, 0, 1}};
+    const InventoryPlanningInput productionPlanning{productionBalances, productionBalances, noAid};
+    first.deadline = 3;
+    const auto delayed = MissionScheduler::schedule({first}, {ship}, graph,
+        {}, false, {}, &productionPlanning);
+    require(delayed.scheduled.size() == 1 && delayed.scheduled[0].departureTime == 2 &&
+        SimulationEngine::run(graph, productionBalances, {first}, {ship}, delayed, {}).completed == 1,
+        "Net production must enable a departure exactly at the latest feasible time.");
+
+    InventoryReservations book(chainBalances);
+    require(book.reserve(1, 2, ResourceType::Food, 2, 3, 6, true) &&
+        !book.reserve(1, 3, ResourceType::Food, 0, 1, 6, true) &&
+        book.reserve(2, 3, ResourceType::Food, 3, 4, 6, false),
+        "Rejecting an inserted withdrawal must preserve existing reservations and incoming stock.");
+    InventoryReservations boundedSink({{1, 12, 0, 1}, {2, 0, 0, 1, ResourceType::Food, 0, 0, 6}});
+    require(boundedSink.reserve(1, 2, ResourceType::Food, 3, 4, 6, true) &&
+        !boundedSink.reserve(1, 2, ResourceType::Food, 1, 2, 6, true),
+        "An earlier insertion cannot consume storage needed by a reserved arrival.");
+
+    auto alternativeAid = first;
+    alternativeAid.origin = 2;
+    const std::vector<Mission> eligibleAid{alternativeAid};
+    const InventoryPlanningInput supplierPlanning{chainBalances, chainBalances, eligibleAid};
+    const auto supplierPlan = MissionScheduler::schedule(eligibleAid, {ship}, graph,
+        {}, false, {}, &supplierPlanning);
+    require(supplierPlan.revisedOrigins.at(alternativeAid.id) == 1 &&
+        supplierPlan.recoveredMissionIds.size() == 1 && supplierPlan.missionsScheduled == 1,
+        "A rejected aid obligation can retain its identity while changing supplier.");
 
     std::vector<Infrastructure> projects(4);
     const int costs[] = {40, 50, 60, 30};

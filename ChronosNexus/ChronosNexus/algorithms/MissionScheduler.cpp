@@ -1,8 +1,10 @@
 #include "MissionScheduler.h"
+#include "InventoryReservations.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -41,8 +43,11 @@ bool MissionScheduler::feasible(const Mission& mission, const Spacecraft& ship,
 SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
     std::vector<Spacecraft> ships, const GalaxyGraph& galaxy,
     const RouteWeights& weights, bool earliestArrival,
-    const std::function<void(size_t)>& progress) {
+    const std::function<void(size_t)>& progress, const InventoryPlanningInput* inventory) {
     SchedulingResult result;
+    std::optional<InventoryReservations> reservations;
+    if (inventory)
+        reservations.emplace(inventory->balances);
     std::unordered_map<int, int> missionCounts;
     std::unordered_map<int, int> shipCounts;
     for (const auto& mission : missions)
@@ -68,27 +73,20 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
         if (ships[i].id >= 0 && shipCounts.at(ships[i].id) == 1)
             atLocation[ships[i].currentLocation].insert(i);
 
-    size_t processed = result.rejectedMissionIds.size();
-    for (const auto& mission : missions) {
-        if (progress)
-            progress(processed);
-        ++processed;
+    auto assign = [&](const Mission& mission) {
         const auto origin = atLocation.find(mission.origin);
-        if (origin == atLocation.end() || origin->second.empty()) {
-            result.rejectedMissionIds.push_back(mission.id);
-            continue;
-        }
+        if (origin == atLocation.end() || origin->second.empty())
+            return false;
         auto path = Dijkstra::findShortestPath(galaxy, mission.origin, mission.destination,
             weights, mission.cargoAmount);
         result.nodesExplored += path.nodesExplored;
-        if (!path.found) {
-            result.rejectedMissionIds.push_back(mission.id);
-            continue;
-        }
+        if (!path.found)
+            return false;
 
         const auto noShip = ships.size();
         size_t winner = noShip;
         double bestArrival = 0;
+        double bestDeparture = 0;
         double bestScore = std::numeric_limits<double>::infinity();
         PathResult bestPath;
         RouteWeights bestWeights = weights;
@@ -101,6 +99,24 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
                 double arrival;
                 if (!feasible(mission, ship, ship.availableAt, candidate.metrics, arrival))
                     continue;
+                double departure = ship.availableAt;
+                if (reservations) {
+                    const double duration = candidate.metrics.time / ship.speed;
+                    bool found = false;
+                    for (double time : reservations->departures(mission.origin, mission.destination,
+                        mission.cargoType, departure, mission.deadline - duration, duration, mission.cargoAmount)) {
+                        ++result.reservationChecks;
+                        if (feasible(mission, ship, time, candidate.metrics, arrival) &&
+                            reservations->reserve(mission.origin, mission.destination, mission.cargoType,
+                                time, arrival, mission.cargoAmount, false)) {
+                            departure = time;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                        continue;
+                }
                 const double score = earliestArrival ? arrival :
                     0.50 * (arrival - ship.availableAt) / (1 + mission.deadline - ship.availableAt) +
                     0.35 * (1 - mission.cargoAmount / ship.maxCargoCapacity) +
@@ -108,6 +124,7 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
                 if (score < bestScore || (score == bestScore && arrival < bestArrival)) {
                     winner = i;
                     bestArrival = arrival;
+                    bestDeparture = departure;
                     bestScore = score;
                     bestPath = candidate;
                     bestWeights = candidateWeights;
@@ -124,18 +141,79 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
                 consider(alternatePath, alternative);
             }
         }
-        if (winner == noShip) {
-            result.rejectedMissionIds.push_back(mission.id);
-            continue;
-        }
+        if (winner == noShip)
+            return false;
+        if (reservations && !reservations->reserve(mission.origin, mission.destination,
+            mission.cargoType, bestDeparture, bestArrival, mission.cargoAmount, true))
+            throw std::logic_error("Selected reservation became infeasible.");
         auto& ship = ships[winner];
-        result.scheduled.push_back({mission.id, ship.id, ship.availableAt, bestArrival,
+        result.scheduled.push_back({mission.id, ship.id, bestDeparture, bestArrival,
             bestPath.metrics.fuel, std::move(bestPath.path), std::move(bestPath.routeIds), bestWeights});
         origin->second.erase(winner);
         ship.currentLocation = mission.destination;
         ship.availableAt = bestArrival;
         ship.currentFuel -= bestPath.metrics.fuel;
         atLocation[ship.currentLocation].insert(winner);
+        return true;
+    };
+
+    std::vector<const Mission*> retry;
+    size_t processed = result.rejectedMissionIds.size();
+    for (const auto& mission : missions) {
+        if (progress)
+            progress(processed);
+        ++processed;
+        if (!assign(mission)) {
+            if (inventory)
+                retry.push_back(&mission);
+            else
+                result.rejectedMissionIds.push_back(mission.id);
+        }
+    }
+    if (inventory && !retry.empty()) {
+        std::unordered_set<int> aidIds;
+        std::unordered_map<ResourceType, std::unordered_set<int>> donors;
+        for (const auto& mission : inventory->aidMissions)
+            aidIds.insert(mission.id);
+        for (const auto& demand : inventory->aidNetwork)
+            if (demand.available > demand.required)
+                donors[demand.type].insert(demand.planetId);
+        std::optional<GalaxyGraph> reverse;
+
+        // Try one append-only insertion pass. Existing ship assignments and times stay fixed.
+        for (const auto* mission : retry) {
+            if (progress)
+                progress(processed);
+            ++processed;
+            bool recovered = assign(*mission);
+            if (!recovered && aidIds.contains(mission->id) && donors.contains(mission->cargoType)) {
+                if (!reverse)
+                    reverse.emplace(galaxy.reversed());
+                const auto& candidates = donors.at(mission->cargoType);
+                std::unordered_set<int> tried{mission->origin, mission->destination};
+                for (int attempt = 0; attempt < 4 && !recovered; ++attempt) {
+                    const auto nearest = Dijkstra::findNearest(*reverse, mission->destination,
+                        [&](int id) {
+                            auto local = atLocation.find(id);
+                            return candidates.contains(id) && !tried.contains(id) &&
+                                local != atLocation.end() && !local->second.empty();
+                        }, weights, mission->cargoAmount);
+                    result.nodesExplored += nearest.nodesExplored;
+                    if (!nearest.found)
+                        break;
+                    Mission alternative = *mission;
+                    alternative.origin = nearest.path.back();
+                    tried.insert(alternative.origin);
+                    recovered = assign(alternative);
+                    if (recovered)
+                        result.revisedOrigins.emplace(alternative.id, alternative.origin);
+                }
+            }
+            if (recovered)
+                result.recoveredMissionIds.push_back(mission->id);
+            else
+                result.rejectedMissionIds.push_back(mission->id);
+        }
     }
     if (progress)
         progress(processed);

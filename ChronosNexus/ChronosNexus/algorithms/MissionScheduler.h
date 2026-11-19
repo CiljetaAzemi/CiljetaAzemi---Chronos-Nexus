@@ -6,6 +6,7 @@
 #include "../models/Spacecraft.h"
 #include "../graph/GalaxyGraph.h"
 #include "Dijkstra.h"
+#include "ResourceAllocator.h"
 
 struct ScheduledMission {
     int missionId;
@@ -24,6 +25,15 @@ struct SchedulingResult {
     int missionsScheduled = 0;
     long long nodesExplored = 0;
     long long candidates = 0;
+    std::vector<int> recoveredMissionIds;
+    std::unordered_map<int, int> revisedOrigins;
+    long long reservationChecks = 0;
+};
+
+struct InventoryPlanningInput {
+    const std::vector<ResourceDemand>& balances;
+    const std::vector<ResourceDemand>& aidNetwork;
+    const std::vector<Mission>& aidMissions;
 };
 
 class MissionScheduler {
@@ -34,7 +44,8 @@ public:
         const GalaxyGraph& galaxy,
         const RouteWeights& weights = {},
         bool earliestArrival = false,
-        const std::function<void(size_t)>& progress = {}
+        const std::function<void(size_t)>& progress = {},
+        const InventoryPlanningInput* inventory = nullptr
     );
     static bool feasible(const Mission& mission, const Spacecraft& ship,
         double departure, const RouteMetrics& route, double& arrival);

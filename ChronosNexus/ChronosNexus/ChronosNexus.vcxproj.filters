@@ -44,6 +44,9 @@
     <ClInclude Include="Benchmark.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="algorithms\InventoryReservations.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="models\Resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
