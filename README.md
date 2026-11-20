@@ -74,3 +74,17 @@ The `phase2` mode improves a cached inventory-aware plan through bounded, depend
 ## Build and reproduce
 
 Use the [Visual Studio build and troubleshooting guide](ChronosNexus/BUILD.md) to build Release x64 and run the regression suite. The [experimental evaluation](ChronosNexus/benchmark-results/README.md) defines the datasets, variants, resource limits, and output fields.
+
+## Project structure
+
+The Visual Studio solution and benchmark runner are in `ChronosNexus/`. The C++ project is in `ChronosNexus/ChronosNexus/`.
+
+| Location | Responsibility |
+|---|---|
+| `main.cpp` | Dispatches the no-argument demonstration, `--benchmark`, and `--self-test`. |
+| `models/`, `graph/` | Domain records and the directed weighted graph. |
+| `algorithms/`, `simulation/` | Planning algorithms and discrete-event execution. |
+| `benchmarks/` | Benchmark orchestration, deterministic dataset generation, and measurement and reporting utilities. |
+| `tests/` | Regression suites for routing, simulation, allocation, inventory, scheduling, construction, and plan improvement. |
+| `examples/` | Console demonstrations of routing, planning, and disruption handling. |
+| `ChronosNexus/benchmark-results/` | Archived CSV evidence and regression summaries. New runs default to the ignored `runs/` subdirectory. |

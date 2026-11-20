@@ -12,7 +12,9 @@
 | Console demonstration | Leave blank |
 | Benchmark | `--benchmark small 20261118 custom` |
 
-Substitute `medium`, `large`, or `extreme` for the dataset size. Direct IDE execution uses no external budget controller. Use the [benchmark runner](Run-Benchmarks.ps1) for resource limits and CSV output. Its default executable is `ChronosNexus/x64/Release/ChronosNexus.exe` relative to the repository root.
+Substitute `medium`, `large`, or `extreme` for the dataset size. Direct IDE execution uses no external budget controller. Use the [benchmark runner](Run-Benchmarks.ps1) for resource limits and CSV output. Its default executable is `ChronosNexus/x64/Release/ChronosNexus.exe` relative to the repository root. New runner output defaults to the local `benchmark-results/runs/` directory. Use a separate `-OutputDirectory` when switching between runs with different CSV columns.
+
+In Solution Explorer, expand `tests/` to set breakpoints in a component's regressions. The `--self-test` argument runs the complete suite through the console executable.
 
 ## Local troubleshooting
 

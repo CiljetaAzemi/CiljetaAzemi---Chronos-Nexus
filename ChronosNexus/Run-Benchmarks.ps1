@@ -10,7 +10,7 @@ param(
     [int]$TimeoutSeconds = 600,
     [ValidateRange(64, 1048576)]
     [int]$MemoryMiB = 1024,
-    [string]$OutputDirectory = "$PSScriptRoot\benchmark-results",
+    [string]$OutputDirectory = "$PSScriptRoot\benchmark-results\runs",
     [switch]$TracePlan
 )
 
