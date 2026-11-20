@@ -67,6 +67,10 @@ Inventory-aware scheduling can improve timely service while increasing aggregate
 
 The optional mode caches exact forward shortest-path results within one planning call. The key includes endpoints, cargo, and all route weights. The cache admits up to 12,288 entries with a combined 2 MiB limit on allocated path-vector payload. Container and entry overhead are separately bounded by the entry limit. Changes to graph topology, route availability, or risk invalidate the cache. Reverse supplier searches remain live because their eligible donors depend on current ship locations.
 
+### Experimental solution improvement
+
+The `phase2` mode improves a cached inventory-aware plan through bounded, dependency-aware local search. It evaluates changes to ship tails and the affected inventory accounts, including fuel and deadline constraints and guards against increases in forecast shortages. The [algorithm note](ChronosNexus/PHASE2.md) provides pseudocode, feasibility arguments, complexity, and limits. The [experimental evaluation](ChronosNexus/benchmark-results/README.md) gives the test evidence and reproduction commands.
+
 ## Build and reproduce
 
 Use the [Visual Studio build and troubleshooting guide](ChronosNexus/BUILD.md) to build Release x64 and run the regression suite. The [experimental evaluation](ChronosNexus/benchmark-results/README.md) defines the datasets, variants, resource limits, and output fields.

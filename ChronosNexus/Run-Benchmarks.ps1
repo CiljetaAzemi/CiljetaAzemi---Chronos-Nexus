@@ -4,7 +4,7 @@ param(
     [ValidateSet('small', 'medium', 'large', 'extreme')]
     [string[]]$Sizes = @('small', 'medium', 'large', 'extreme'),
     [uint32]$Seed = 20261118,
-    [ValidateSet('custom', 'earliest', 'basic', 'all-routes', 'greedy-build', 'stress', 'stress-all-routes', 'inventory', 'inventory-uncached')]
+    [ValidateSet('custom', 'earliest', 'basic', 'all-routes', 'greedy-build', 'stress', 'stress-all-routes', 'inventory', 'inventory-uncached', 'phase2')]
     [string[]]$Modes = @('custom'),
     [ValidateRange(1, 86400)]
     [int]$TimeoutSeconds = 600,
@@ -31,7 +31,9 @@ $qualityFields = @(
     'weighted_timely_cargo', 'weighted_demand', 'weighted_timely_aid', 'weighted_aid_demand',
     'reservation_checks'
 )
-$includeQuality = $Modes -contains 'inventory' -or $Modes -contains 'inventory-uncached'
+$includeQuality = $Modes -contains 'inventory' -or $Modes -contains 'inventory-uncached' -or $Modes -contains 'phase2'
+$includeLocal = $Modes -contains 'phase2'
+$localFields = @('local_trials', 'local_accepted', 'local_recovered', 'local_arcs', 'local_pruned_arcs')
 $dimensions = @{
     small = 100, 500, 50
     medium = 1000, 10000, 500
@@ -107,11 +109,15 @@ foreach ($size in $Sizes) {
         $last = ($lines | Where-Object { $_ -like 'PROGRESS,*' } | Select-Object -Last 1) -split ','
         $result = ($lines | Where-Object { $_ -like 'RESULT,*' } | Select-Object -Last 1) -split ','
         $quality = ($lines | Where-Object { $_ -like 'QUALITY,*' } | Select-Object -Last 1) -split ','
+        $local = ($lines | Where-Object { $_ -like 'LOCAL,*' } | Select-Object -Last 1) -split ','
         if ($status -eq 'complete' -and $result.Count -ne ($fields.Count + 1)) {
             $status = 'missing_result'
         }
         if ($status -eq 'complete' -and $includeQuality -and $quality.Count -ne ($qualityFields.Count + 1)) {
             $status = 'missing_quality'
+        }
+        if ($status -eq 'complete' -and $mode -eq 'phase2' -and $local.Count -ne ($localFields.Count + 1)) {
+            $status = 'missing_local'
         }
         $counts = $dimensions[$size]
         $row = [ordered]@{
@@ -143,6 +149,13 @@ foreach ($size in $Sizes) {
         if ($includeQuality) {
             for ($i = 0; $i -lt $qualityFields.Count; ++$i) {
                 $row[$qualityFields[$i]] = if ($status -eq 'complete') { $quality[$i + 1] } else { 'NA' }
+            }
+        }
+        if ($includeLocal) {
+            for ($i = 0; $i -lt $localFields.Count; ++$i) {
+                $row[$localFields[$i]] = if ($status -ne 'complete') { 'NA' }
+                    elseif ($mode -eq 'phase2') { $local[$i + 1] }
+                    else { 0 }
             }
         }
         [pscustomobject]$row | Export-Csv -LiteralPath $csv -Append -NoTypeInformation

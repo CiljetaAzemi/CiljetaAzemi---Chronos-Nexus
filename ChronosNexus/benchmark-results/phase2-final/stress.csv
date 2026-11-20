@@ -1,0 +1,7 @@
+scenario,mode,completed,failed,rejected,weighted_timely_percent,ending_shortage,unserved_demand,fuel,trials,accepted
+scarce_sparse,custom,55,46,484,5.98971,5410,1627,1968.43,0,0
+scarce_sparse,inventory,87,0,498,9.84174,5623.52,1530.48,3824.43,0,0
+scarce_sparse,phase2,87,0,498,9.84174,5623.52,1530.48,3824.43,78,0
+donor_production_cut,custom,231,41,278,34.9863,2313,614,9184.66,0,0
+donor_production_cut,inventory,255,0,295,37.6165,2258,361,10492,0,0
+donor_production_cut,phase2,255,0,295,37.6165,2258,361,10492,168,5

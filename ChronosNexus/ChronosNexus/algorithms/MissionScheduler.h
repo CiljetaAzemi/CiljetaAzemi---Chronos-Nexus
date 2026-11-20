@@ -32,6 +32,11 @@ struct SchedulingResult {
     size_t routeCachePeakEntries = 0;
     size_t routeCachePeakPayloadBytes = 0;
     size_t routeCacheInvalidations = 0;
+    int searchTrials = 0;
+    int acceptedMoves = 0;
+    int locallyRecovered = 0;
+    long long searchArcs = 0;
+    long long prunedArcs = 0;
 };
 
 struct InventoryPlanningInput {

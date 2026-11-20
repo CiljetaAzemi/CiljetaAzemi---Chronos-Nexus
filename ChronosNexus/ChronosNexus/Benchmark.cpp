@@ -18,6 +18,7 @@
 
 #include "algorithms/InfrastructureOptimizer.h"
 #include "algorithms/InventoryReservations.h"
+#include "algorithms/PlanImprover.h"
 #include "algorithms/LogisticsPlanner.h"
 #include "models/Colony.h"
 #include "models/Station.h"
@@ -254,7 +255,7 @@ void addStressClosures(const SchedulingResult& schedule, std::vector<Event>& eve
 int runBenchmark(int argc, char* argv[]) {
     if (argc < 4 || argc > 6 || (argc == 6 && std::string(argv[5]) != "--trace-plan"))
         throw std::invalid_argument(
-            "Usage: --benchmark SIZE SEED [MODE [--trace-plan]] (inventory or inventory-uncached for Phase 1)");
+            "Usage: --benchmark SIZE SEED [MODE [--trace-plan]] (inventory for Phase 1, phase2 for local search)");
     const std::string name = argv[2];
     const auto size = dimensions(name);
     size_t consumed = 0;
@@ -262,7 +263,8 @@ int runBenchmark(int argc, char* argv[]) {
     if (consumed != std::string(argv[3]).size() || seed > 0xffffffffUL || argv[3][0] == '-')
         throw std::invalid_argument("Seed must be an unsigned 32-bit integer.");
     const std::string mode = argc >= 5 ? argv[4] : "custom";
-    const bool inventoryMode = mode == "inventory" || mode == "inventory-uncached";
+    const bool improve = mode == "phase2";
+    const bool inventoryMode = mode == "inventory" || mode == "inventory-uncached" || improve;
     if (mode != "custom" && mode != "earliest" && mode != "basic" &&
         mode != "all-routes" && mode != "greedy-build" &&
         mode != "stress" && mode != "stress-all-routes" && !inventoryMode)
@@ -308,10 +310,15 @@ int runBenchmark(int argc, char* argv[]) {
               << aid.size() << " aid proposals.\n";
 
     report("scheduling", 0, 0, true);
-    const InventoryPlanningInput planning{data.inventory, data.aidDemands, aid, mode == "inventory"};
-    const auto schedule = MissionScheduler::schedule(data.missions, data.ships, data.graph,
+    const InventoryPlanningInput planning{data.inventory, data.aidDemands, aid, mode != "inventory-uncached"};
+    auto schedule = MissionScheduler::schedule(data.missions, data.ships, data.graph,
         weights, mode == "earliest", [&](size_t count) { report("scheduling", 0, count); },
         inventoryMode ? &planning : nullptr);
+    if (improve) {
+        report("local-search", 0, 0, true);
+        schedule = PlanImprover::improve(std::move(schedule), data.missions, data.ships,
+            data.graph, data.inventory, weights, 30);
+    }
     // Alternative suppliers change the source, while obligation ID, quantity and deadline stay fixed.
     for (auto& mission : data.missions)
         if (const auto source = schedule.revisedOrigins.find(mission.id);
@@ -415,6 +422,9 @@ int runBenchmark(int argc, char* argv[]) {
     if (inventoryMode)
         std::cout << "CACHE," << schedule.routeCacheHits << ',' << schedule.routeCachePeakEntries
                   << ',' << schedule.routeCachePeakPayloadBytes << ',' << schedule.routeCacheInvalidations << '\n';
+    if (improve)
+        std::cout << "LOCAL," << schedule.searchTrials << ',' << schedule.acceptedMoves << ','
+            << schedule.locallyRecovered << ',' << schedule.searchArcs << ',' << schedule.prunedArcs << '\n';
     // Trace after timing and memory measurements. Hex floats preserve exact decision values.
     if (argc == 6) {
         std::cout << std::hexfloat;
@@ -677,6 +687,138 @@ int runSelfTests() {
     samePlan(MissionScheduler::schedule({first, second, third}, {ship}, graph,
         {}, false, {}, &longChainUncached), longChain);
     require(longChain.missionsScheduled == 2, "Cache changed the bounded three-leg retry outcome.");
+    const auto improvedChain = PlanImprover::improve(longChain, {first, second, third}, {ship},
+        graph, longChainBalances, {}, 30);
+    const auto chainActual = SimulationEngine::run(graph, longChainBalances, {first, second, third},
+        {ship}, improvedChain, {});
+    require(improvedChain.locallyRecovered == 1 && chainActual.completed == 3 &&
+        chainActual.inventoryFailures == 0, "Local search must attain the three-obligation chain optimum.");
+
+    GalaxyGraph constrained;
+    for (const auto& [id, fuel, time] : std::vector<std::tuple<int, double, double>>{
+        {1, 1, 12}, {2, 12, 1}, {3, 6, 6}}) {
+        Route route{};
+        route.id = id;
+        route.from = 1;
+        route.to = 2;
+        route.distance = id == 2 ? 1 : 2;
+        route.travelTime = time;
+        route.fuelConsumption = fuel;
+        route.reliability = 1;
+        route.maxCapacity = 6;
+        route.isAvailable = true;
+        constrained.addRoute(route);
+    }
+    auto tight = first;
+    tight.deadline = 6;
+    auto lowFuel = ship;
+    lowFuel.currentFuel = 6;
+    const std::vector<Mission> tightJobs{tight};
+    const auto missed = MissionScheduler::schedule(tightJobs, {lowFuel}, constrained, {}, false, {}, &chainPlanning);
+    const auto found = PlanImprover::improve(missed, tightJobs, {lowFuel}, constrained, chainBalances, {}, 30);
+    require(missed.missionsScheduled == 0 && found.missionsScheduled == 1 &&
+        found.scheduled.front().routeIds == std::vector<int>{3} &&
+        SimulationEngine::run(constrained, chainBalances, tightJobs, {lowFuel}, found, {}).completed == 1,
+        "Only the middle route meets both six-unit bounds.");
+
+    const std::vector<ResourceDemand> donorTarget{{1, 6, 6, 1}, {2, 0, 0, 1}};
+    const auto guarded = PlanImprover::improve(missed, tightJobs, {lowFuel}, constrained, donorTarget, {}, 30);
+    require(guarded.missionsScheduled == 0, "An improvement cannot drain protected ending stock.");
+
+    auto costly = ship;
+    costly.operatingCost = 100;
+    auto cheap = secondShip;
+    cheap.operatingCost = 1;
+    cheap.availableAt = 1;
+    const auto incumbent = MissionScheduler::schedule({first}, {costly, cheap}, graph, {},
+        true, {}, &chainPlanning);
+    const auto relocated = PlanImprover::improve(incumbent, {first}, {costly, cheap}, graph,
+        chainBalances, {}, 30);
+    require(incumbent.scheduled.front().spacecraftId == costly.id &&
+        relocated.scheduled.front().spacecraftId == cheap.id,
+        "Equivalent timely service can be relocated to a cheaper ship.");
+    auto simpleGraph = [](const std::vector<std::pair<int, int>>& links) {
+        GalaxyGraph network;
+        int id = 0;
+        for (const auto& [from, to] : links) {
+            Route route{};
+            route.id = ++id;
+            route.from = from;
+            route.to = to;
+            route.distance = route.travelTime = route.fuelConsumption = 1;
+            route.reliability = 1;
+            route.isAvailable = true;
+            route.maxCapacity = 10;
+            network.addRoute(route);
+        }
+        return network;
+    };
+    const auto loop = simpleGraph({{1, 2}, {2, 1}, {1, 3}});
+    auto last = first;
+    last.destination = 3;
+    last.priority = 9;
+    auto outbound = first;
+    outbound.id = 2;
+    outbound.priority = 2;
+    auto inbound = outbound;
+    inbound.id = 3;
+    inbound.origin = 2;
+    inbound.destination = 1;
+    inbound.deadline = 8;
+    const std::vector<Mission> resequence{last, outbound, inbound};
+    const auto beforeLoop = MissionScheduler::schedule(resequence, {ship}, loop, {}, false, {}, &chainPlanning);
+    const auto afterLoop = PlanImprover::improve(beforeLoop, resequence, {ship}, loop, chainBalances, {}, 30);
+    require(beforeLoop.missionsScheduled == 1 && afterLoop.missionsScheduled == 3 &&
+        SimulationEngine::run(loop, chainBalances, resequence, {ship}, afterLoop, {}).completed == 3,
+        "A returning enabling pair can be inserted before the previous terminal leg.");
+
+    auto exchangeGraph = simpleGraph({{1, 2}});
+    Route longRoute = *exchangeGraph.findRoute(1);
+    longRoute.id = 2;
+    longRoute.to = 3;
+    longRoute.distance = longRoute.travelTime = longRoute.fuelConsumption = 5;
+    exchangeGraph.addRoute(longRoute);
+    const std::vector<ResourceDemand> exchangeStock{{1, 12, 0, 1}, {2, 0, 0, 1}, {3, 0, 0, 1}};
+    const InventoryPlanningInput exchangeInput{exchangeStock, exchangeStock, noAid};
+    const std::vector<Mission> exchangeJobs{last, outbound};
+    const auto beforeExchange = MissionScheduler::schedule(exchangeJobs, {costly, cheap}, exchangeGraph,
+        {}, true, {}, &exchangeInput);
+    const auto afterExchange = PlanImprover::improve(beforeExchange, exchangeJobs, {costly, cheap},
+        exchangeGraph, exchangeStock, {}, 30);
+    const auto exchanged = SimulationEngine::run(exchangeGraph, exchangeStock, exchangeJobs,
+        {costly, cheap}, afterExchange, {});
+    require(beforeExchange.scheduled.size() == 2 &&
+        beforeExchange.scheduled.front().spacecraftId == costly.id && exchanged.completed == 2 &&
+        exchanged.transportationCost == 105,
+        "Swapping terminal assignments must realize the cheaper of the two feasible ship pairings.");
+
+    const auto supplyGraph = simpleGraph({{1, 3}, {1, 4}, {2, 3}});
+    auto x = first;
+    x.destination = 3;
+    x.cargoAmount = 5;
+    x.priority = 2;
+    auto y = x;
+    y.id = 2;
+    y.destination = 4;
+    y.priority = 1;
+    auto supplierB = secondShip;
+    supplierB.currentLocation = 2;
+    const std::vector<ResourceDemand> twoDonors{{1, 5, 0, 1}, {2, 5, 0, 1}, {3, 0, 5, 2}, {4, 0, 5, 1}};
+    const std::vector<Mission> competingAid{x, y};
+    const InventoryPlanningInput donorsPlan{twoDonors, twoDonors, competingAid};
+    const auto greedyDonor = MissionScheduler::schedule(competingAid, {ship, supplierB}, supplyGraph,
+        {}, false, {}, &donorsPlan);
+    const auto localDonor = PlanImprover::improve(greedyDonor, competingAid, {ship, supplierB},
+        supplyGraph, twoDonors, {}, 30);
+    x.origin = 2;
+    const auto donorWitness = MissionScheduler::schedule({x, y}, {ship, supplierB}, supplyGraph,
+        {}, false, {}, &donorsPlan);
+    require(localDonor.missionsScheduled == 1 && donorWitness.missionsScheduled == 2 &&
+        SimulationEngine::run(supplyGraph, twoDonors, {x, y}, {ship, supplierB}, donorWitness, {}).deliveredAmount == 10,
+        "Changing a committed aid supplier remains outside the local neighborhood.");
+    std::cout << "Phase 2 exact fixtures: chain 3/3, constrained route 1/1, "
+                 "scarcity guard 0/0, cheaper relocation and swap, terminal resequence 3/3, "
+                 "donor counterexample 1/2.\n";
 
     const InventoryPlanningInput uncachedProduction{productionBalances, productionBalances, noAid, false};
     first.deadline = 3;
@@ -731,6 +873,41 @@ int runSelfTests() {
             "Stress execution diverged from the verified inventory-plan outcome.");
         std::cout << "Cache stress " << scenario << ": identical plan, " << executed.completed
                   << " completed, " << executed.inventoryFailures << " stock failures.\n";
+        // Restore input supplier identities before evaluating each mode independently.
+        for (const auto& original : obligations)
+            for (auto& mission : data.missions)
+                if (mission.id == original.id)
+                    mission.origin = original.origin;
+        const auto baseline = MissionScheduler::schedule(data.missions, data.ships, data.graph, stressWeights);
+        const auto local = PlanImprover::improve(after, data.missions, data.ships,
+            data.graph, data.inventory, stressWeights, 30);
+        for (const auto& [name, schedule] : std::vector<std::pair<std::string, const SchedulingResult*>>{
+            {"custom", &baseline}, {"inventory", &after}, {"phase2", &local}}) {
+            auto obligationsForRun = data.missions;
+            for (auto& mission : obligationsForRun)
+                if (const auto source = schedule->revisedOrigins.find(mission.id);
+                    source != schedule->revisedOrigins.end())
+                    mission.origin = source->second;
+            const auto result = SimulationEngine::run(data.graph, data.inventory, obligationsForRun,
+                data.ships, *schedule, data.events, {}, false, 30);
+            double total = 0, timely = 0;
+            for (const auto& mission : obligationsForRun) {
+                total += mission.priority * mission.cargoAmount;
+                if (const auto delivery = result.deliveries.find(mission.id);
+                    delivery != result.deliveries.end() && delivery->second.arrival <= mission.deadline)
+                    timely += mission.priority * delivery->second.amount;
+            }
+            if (name == "phase2") {
+                const auto nominal = SimulationEngine::run(data.graph, data.inventory, obligationsForRun,
+                    data.ships, *schedule, {}, {}, false, 30);
+                require(nominal.completed == schedule->missionsScheduled && nominal.inventoryFailures == 0,
+                    "Phase 2 stress plan must be feasible in a nominal simulator replay.");
+            }
+            std::cout << "PHASE2_STRESS," << scenario << ',' << name << ',' << result.completed << ','
+                << result.failed << ',' << schedule->rejectedMissionIds.size() << ',' << timely / total * 100
+                << ',' << result.remainingShortage << ',' << result.stockoutAmount << ',' << result.fuel
+                << ',' << schedule->searchTrials << ',' << schedule->acceptedMoves << '\n';
+        }
     }
 
     std::vector<Infrastructure> projects(4);

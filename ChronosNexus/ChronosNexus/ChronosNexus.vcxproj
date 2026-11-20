@@ -140,6 +140,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Benchmark.cpp" />
+    <ClCompile Include="algorithms\PlanImprover.cpp" />
     <ClCompile Include="algorithms\Dijkstra.cpp" />
     <ClCompile Include="algorithms\InfrastructureOptimizer.cpp" />
     <ClCompile Include="algorithms\MissionScheduler.cpp" />
@@ -151,6 +152,7 @@
   <ItemGroup>
     <ClInclude Include="Benchmark.h" />
     <ClInclude Include="algorithms\InventoryReservations.h" />
+    <ClInclude Include="algorithms\PlanImprover.h" />
     <ClInclude Include="algorithms\Dijkstra.h" />
     <ClInclude Include="algorithms\InfrastructureOptimizer.h" />
     <ClInclude Include="algorithms\LogisticsPlanner.h" />

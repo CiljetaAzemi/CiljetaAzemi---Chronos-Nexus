@@ -20,7 +20,7 @@ public:
                 b.available < 0 || b.available > b.storage ||
                 b.production < 0 || b.consumption < 0 ||
                 !accounts[b.planetId].emplace(b.type, Account{b.available,
-                    b.production - b.consumption, b.storage, {}}).second)
+                    b.production - b.consumption, b.storage, {}, b.required}).second)
                 throw std::invalid_argument("Invalid or duplicate planning inventory.");
         }
     }
@@ -66,6 +66,73 @@ public:
         return feasible;
     }
 
+    using Key = std::pair<int, ResourceType>;
+    struct Shortages { double ending = 0; double unserved = 0; };
+
+    InventoryReservations subset(const std::vector<Key>& keys) const {
+        InventoryReservations copy({});
+        for (const auto& [location, type] : keys)
+            if (const auto* account = find(location, type))
+                copy.accounts[location].emplace(type, *account);
+        return copy;
+    }
+
+    void replaceAccounts(InventoryReservations&& replacement) {
+        for (auto& [location, row] : replacement.accounts)
+            for (auto& [type, account] : row)
+                accounts.at(location).at(type) = std::move(account);
+    }
+
+    bool adjust(int origin, int destination, ResourceType type,
+        double departure, double arrival, double signedAmount) {
+        auto* source = find(origin, type);
+        auto* sink = find(destination, type);
+        if (!source || !sink || !(departure < arrival))
+            return false;
+        auto& outgoing = source->changes[departure];
+        outgoing.out += signedAmount;
+        if (outgoing.in == 0 && outgoing.out == 0)
+            source->changes.erase(departure);
+        auto& incoming = sink->changes[arrival];
+        incoming.in += signedAmount;
+        if (incoming.in == 0 && incoming.out == 0)
+            sink->changes.erase(arrival);
+        return true;
+    }
+
+    bool feasible() const {
+        for (const auto& [location, row] : accounts)
+            for (const auto& [type, account] : row)
+                if (!valid(account))
+                    return false;
+        return true;
+    }
+
+    Shortages shortages(double horizon) const {
+        Shortages result;
+        for (const auto& [location, row] : accounts) {
+            for (const auto& [type, account] : row) {
+                double stock = account.initial;
+                double last = 0;
+                auto advanceTo = [&](double time) {
+                    const double raw = stock + account.rate * (time - last);
+                    result.unserved += std::max(0.0, -raw);
+                    stock = std::clamp(raw, 0.0, account.capacity);
+                    last = time;
+                };
+                for (const auto& [time, change] : account.changes) {
+                    if (time > horizon)
+                        break;
+                    advanceTo(time);
+                    stock += change.in - change.out;
+                }
+                advanceTo(horizon);
+                result.ending += std::max(0.0, account.target - stock);
+            }
+        }
+        return result;
+    }
+
 private:
     static constexpr size_t trialLimit = 12;
     struct Change { double in = 0; double out = 0; };
@@ -74,6 +141,7 @@ private:
         double rate;
         double capacity;
         std::map<double, Change> changes;
+        double target = 0;
     };
     std::unordered_map<int, std::unordered_map<ResourceType, Account>> accounts;
 
@@ -98,7 +166,7 @@ private:
         double previous = 0;
         for (const auto& [time, change] : account.changes) {
             stock = advance(account, stock, time - previous);
-            if (change.in > account.capacity - stock)
+            if (change.in < 0 || change.out < 0 || change.in > account.capacity - stock)
                 return false;
             stock += change.in;
             if (change.out > stock)

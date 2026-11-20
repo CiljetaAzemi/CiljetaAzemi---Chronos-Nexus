@@ -94,3 +94,20 @@ foreach ($seed in 20261118, 42, 1729, 8675309, 314159) {
 ```
 
 Inventory-aware planning remains opt-in. In the preceding [scarcity stress comparison](inventory-robustness/stress-results.csv), reducing initial stock to 40% and retaining 139 ships increased timely fulfillment from 5.99% to 9.84% under inventory-aware scheduling, while ending shortage rose from 5,410 to 5,623.52 units. Exact route reuse preserves the policy's decisions, including this trade-off. Future evaluations should consider timely fulfillment, ending shortage and fuel jointly, especially when additional departures compete with suppliers' retained stock.
+
+## Experimental Phase 2 evaluation
+
+The [local-search algorithm note](../PHASE2.md) specifies the deterministic budgets, feasibility checks, and nominal objective. Comparisons use the same fixed obligations and generated event traces for `custom`, `inventory`, and `phase2`. The [paired results](phase2-final/results.csv), [stress results](phase2-final/stress.csv), and [regression output](phase2-final/self-test.txt) record the runs.
+
+```powershell
+foreach ($seed in 20261118, 42, 1729, 8675309, 314159) {
+    $sizes = if ($seed -in 20261118, 42, 1729) { 'small', 'medium', 'large' } else { 'small', 'medium' }
+    .\ChronosNexus\Run-Benchmarks.ps1 -Sizes $sizes -Seed $seed -Modes custom,inventory,phase2 -TimeoutSeconds 120 -OutputDirectory .\x64\reproduction\phase2
+}
+```
+
+Run `--self-test` for the exact tiny and medium stress fixtures. The local counters report attempted and accepted moves, recovered obligations, examined route arcs, and arcs pruned by eligibility, resource bounds, dominance, or the active-label cap. The ratio of pruned to examined arcs describes these queries. It does not estimate the size of the full combinatorial search space.
+
+All 39 Release x64 runs completed across 13 three-mode groups. The two controls reproduced their archived solution outcomes. Phase 2 accepted 56 of 1,908 trials and pruned 1,093,361 of 1,435,488 examined arcs (76.17%). It recovered one previously rejected mission, displacing another. Completion counts matched Phase 1 in every pair.
+
+Mean timely fulfillment relative to Phase 1 changed by −0.33 percentage points on small, +0.09 on medium, and zero on large. The small continuity seed increased realized ending shortage by 36 units despite passing the nominal shortage guard. The scarcity and donor-cut stress cases matched Phase 1 on completion, timely fulfillment, and shortage. In particular, the scarcity case still left higher ending shortage than the original baseline. The results support constrained routing and dependency recovery on the exact fixtures without establishing a general improvement over Phase 1.
