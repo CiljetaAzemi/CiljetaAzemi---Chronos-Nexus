@@ -32,6 +32,8 @@ struct SimulationResult {
     double remainingShortage = 0.0;
 
     std::unordered_map<int, double> finalResources;
+    struct ResourceOutcome { double endingShortage; double unserved; };
+    std::unordered_map<int, std::unordered_map<ResourceType, ResourceOutcome>> resourceOutcomes;
     std::unordered_map<int, MissionStatus> missionStatuses;
     struct Delivery { double amount; double arrival; };
     std::unordered_map<int, Delivery> deliveries;

@@ -26,4 +26,5 @@ void testInventoryAndCache();
 void testPlanImprovement();
 void testStressScenarios();
 void testInfrastructure();
+void testCivilization();
 }

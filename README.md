@@ -88,3 +88,43 @@ The Visual Studio solution and benchmark runner are in `ChronosNexus/`. The C++ 
 | `tests/` | Regression suites for routing, simulation, allocation, inventory, scheduling, construction, and plan improvement. |
 | `examples/` | Console demonstrations of routing, planning, and disruption handling. |
 | `ChronosNexus/benchmark-results/` | Archived CSV evidence and regression summaries. New runs default to the ignored `runs/` subdirectory. |
+
+## Experimental civilization objective
+
+The `phase3` mode compares a bounded set of joint logistics and construction plans. The earlier modes remain available, and `custom` remains the default. The historical civilization score is retained for continuity. Its raw terms combine unlike scales and can reward the same shipment through completion, delivery, and a smaller shortage. Phase 1's scarce-fleet test illustrates the disconnect. Timely fulfillment improved while ending shortage rose. Phase 2 also increased realized shortage by 36 units on the small continuity seed despite its nominal guard.
+
+For a nonnegative quantity `x` and fixed scenario reference `r`, define `p(x,r) = x / (x + max(1,r))`. The objective uses the following dimensionless components.
+
+| Component | Definition |
+|---|---|
+| Security `S` | One minus the mean of normalized ending shortage and cumulative unserved demand. References are initial stock targets and horizon consumption, respectively. |
+| Critical security `K` | The same calculation restricted to colony food and medicine. This is a resource-stability proxy. It does not estimate survival or population change. If no colonies exist, use overall security. |
+| Service `F` | Priority-weighted accepted input cargo delivered by its deadline divided by priority-weighted requested input cargo. All original requests remain in the denominator. Generated aid enters through the inventory consequences; all-obligation fulfillment is also reported separately. |
+| Infrastructure `I` | Selected strategic value divided by the total nonnegative strategic value of the offered projects. Production impacts are simulated separately; strategic value is treated as a proxy for other benefits. |
+| Operational penalty `O` | Mean of normalized transport credits, fuel, and construction spending. References are one credit and one fuel unit per requested input cargo unit, and the construction budget, respectively. |
+| Waste and risk `W, R` | Normalized waste and additive route risk with references of requested cargo plus horizon consumption, and one exposure unit per input mission, respectively. |
+
+The balanced score is `30S + 25K + 20F + 5I − 10O − 5W − 5R`. Security receives 55 of 100 weight points to emphasize the project's resource-security objective. The critical slice gives essential colony stocks additional emphasis. Service receives 20 points, construction strategic value receives five, and the remaining points penalize operations, waste, and exposure. These are policy preferences with fixed reference scales, and the official competition coefficients remain unknown. The security profile uses `35,35,10,5,5,5,5`, while the service profile uses `20,15,40,5,10,5,5`. Custom coefficients can be supplied as seven nonnegative values with `--objective=` and are normalized to sum to 100. Zero-denominator service and infrastructure components contribute zero.
+
+### Planning heuristic
+
+```text
+seed ← cached inventory-aware schedule on fixed obligations
+standard construction ← budgeted strategic-value Knapsack
+targeted construction ← Knapsack with projected production-deficit bonuses
+propose the seed with standard construction and with no construction
+propose the Phase 2 local-search result with standard construction
+for standard and targeted construction:
+    reprioritize obligations using projected inventory and construction timing
+    shortlist alternate donors for up to 24 aid obligations
+    generate a feasible schedule with one of the existing ship rankings
+simulate each candidate with committed construction and without surprise events
+discard candidates with nominal execution failures, clipped cargo, or late deliveries
+select the feasible candidate with the greatest civilization score
+```
+
+Fixed obligations retain their identities, destinations, quantities and deadlines. Their original priorities define the evaluator. A candidate can change solver priorities, suppliers, and ship choices. Nominal replay includes committed construction and can receive explicitly announced production cuts. The benchmark passes no future disruption events to the planner. Unexpected route or production changes are supplied to the final simulation and remain outside this phase's planning model. The simulator enforces the physical and stock conditions, and Knapsack bounds construction spending. If no candidate passes, the planner can return an empty feasible plan and all obligations remain unserved for scoring.
+
+The original techniques are Dijkstra, greedy scheduling, 0/1 Knapsack, and event simulation. The Phase 3 contribution is the fixed-denominator score, deficit-based construction and supplier proposals, and joint selection by replay using known production completions. The heuristic tests five joint candidates and at most one empty fallback. With scheduler cost `A`, local-search cost `L`, nominal replay cost `E`, shortest-path query cost `D`, and `P` projects and budget `B`, additional planning time is bounded by `O(2A + L + 6E + 48D + PB)`, plus inventory indexing, obligation sorting, and project lookup. The candidates are evaluated sequentially. Storage holds a bounded number of schedules and inventory/graph snapshots, plus the existing scheduler, search, and Knapsack workspace.
+
+The proposal budget can miss better supplier combinations, time-phased transport, or construction portfolios. Candidate generation uses approximate deficit priorities and the existing freight planner. The final nominal replay checks timed construction effects exactly as the simulator models them. The [benchmark evaluation](ChronosNexus/benchmark-results/README.md) reports sensitivity and realized outcomes.

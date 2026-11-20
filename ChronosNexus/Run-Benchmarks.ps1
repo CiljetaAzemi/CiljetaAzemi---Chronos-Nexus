@@ -4,14 +4,19 @@ param(
     [ValidateSet('small', 'medium', 'large', 'extreme')]
     [string[]]$Sizes = @('small', 'medium', 'large', 'extreme'),
     [uint32]$Seed = 20261118,
-    [ValidateSet('custom', 'earliest', 'basic', 'all-routes', 'greedy-build', 'stress', 'stress-all-routes', 'inventory', 'inventory-uncached', 'phase2')]
+    [ValidateSet('custom', 'earliest', 'basic', 'all-routes', 'greedy-build', 'stress', 'stress-all-routes', 'inventory', 'inventory-uncached', 'phase2', 'phase3')]
     [string[]]$Modes = @('custom'),
     [ValidateRange(1, 86400)]
     [int]$TimeoutSeconds = 600,
     [ValidateRange(64, 1048576)]
     [int]$MemoryMiB = 1024,
     [string]$OutputDirectory = "$PSScriptRoot\benchmark-results\runs",
-    [switch]$TracePlan
+    [switch]$TracePlan,
+    [ValidateSet('balanced', 'security', 'service')]
+    [string]$ObjectiveProfile = 'balanced',
+    [ValidateSet('standard', 'scarcity', 'production-cut')]
+    [string]$Scenario = 'standard',
+    [switch]$CivilizationMetrics
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,7 +36,11 @@ $qualityFields = @(
     'weighted_timely_cargo', 'weighted_demand', 'weighted_timely_aid', 'weighted_aid_demand',
     'reservation_checks'
 )
-$includeQuality = $Modes -contains 'inventory' -or $Modes -contains 'inventory-uncached' -or $Modes -contains 'phase2'
+$includeCivilization = $CivilizationMetrics -or $Modes -contains 'phase3'
+$includeQuality = $includeCivilization -or $Modes -contains 'inventory' -or $Modes -contains 'inventory-uncached' -or $Modes -contains 'phase2'
+$civilizationFields = @('objective_profile','scenario','objective_value','security','critical_security',
+    'input_service','infrastructure_benefit','operating_penalty','waste_penalty','risk_penalty',
+    'critical_shortage','critical_unserved','plans_evaluated','plans_feasible','forecast_objective')
 $includeLocal = $Modes -contains 'phase2'
 $localFields = @('local_trials', 'local_accepted', 'local_recovered', 'local_arcs', 'local_pruned_arcs')
 $dimensions = @{
@@ -42,7 +51,8 @@ $dimensions = @{
 }
 foreach ($size in $Sizes) {
     foreach ($mode in $Modes) {
-        $id = "$size-$Seed-$mode-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff'))"
+        $tag = if ($includeCivilization) { "-$Scenario-$ObjectiveProfile" } else { '' }
+        $id = "$size-$Seed-$mode$tag-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff'))"
         $stdout = Join-Path $OutputDirectory "$id.stdout.txt"
         $stderr = Join-Path $OutputDirectory "$id.stderr.txt"
         $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -55,6 +65,8 @@ foreach ($size in $Sizes) {
         try {
             $arguments = @('--benchmark', $size, "$Seed", $mode)
             if ($TracePlan) { $arguments += '--trace-plan' }
+            if ($includeCivilization) { $arguments += "--objective=$ObjectiveProfile" }
+            if ($Scenario -ne 'standard') { $arguments += "--scenario=$Scenario" }
             $process = Start-Process -FilePath $exe -ArgumentList $arguments `
                 -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -WindowStyle Hidden
             $null = $process.Handle
@@ -110,6 +122,10 @@ foreach ($size in $Sizes) {
         $result = ($lines | Where-Object { $_ -like 'RESULT,*' } | Select-Object -Last 1) -split ','
         $quality = ($lines | Where-Object { $_ -like 'QUALITY,*' } | Select-Object -Last 1) -split ','
         $local = ($lines | Where-Object { $_ -like 'LOCAL,*' } | Select-Object -Last 1) -split ','
+        $civilization = ($lines | Where-Object { $_ -like 'CIVILIZATION,*' } | Select-Object -Last 1) -split ','
+        if ($status -eq 'complete' -and $includeCivilization -and $civilization.Count -ne ($civilizationFields.Count + 1)) {
+            $status = 'missing_civilization'
+        }
         if ($status -eq 'complete' -and $result.Count -ne ($fields.Count + 1)) {
             $status = 'missing_result'
         }
@@ -156,6 +172,11 @@ foreach ($size in $Sizes) {
                 $row[$localFields[$i]] = if ($status -ne 'complete') { 'NA' }
                     elseif ($mode -eq 'phase2') { $local[$i + 1] }
                     else { 0 }
+            }
+        }
+        if ($includeCivilization) {
+            for ($i = 0; $i -lt $civilizationFields.Count; ++$i) {
+                $row[$civilizationFields[$i]] = if ($status -eq 'complete') { $civilization[$i + 1] } else { 'NA' }
             }
         }
         [pscustomobject]$row | Export-Csv -LiteralPath $csv -Append -NoTypeInformation

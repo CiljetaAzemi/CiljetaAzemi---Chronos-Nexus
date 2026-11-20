@@ -33,6 +33,8 @@
     <ClCompile Include="algorithms\MissionScheduler.cpp">
       <Filter>algorithms</Filter>
     </ClCompile>
+    <ClCompile Include="algorithms\CivilizationObjective.cpp"><Filter>algorithms</Filter></ClCompile>
+    <ClCompile Include="algorithms\CivilizationPlanner.cpp"><Filter>algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\PlanImprover.cpp">
       <Filter>algorithms</Filter>
     </ClCompile>
@@ -76,6 +78,7 @@
     <ClCompile Include="tests\InfrastructureTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\CivilizationTests.cpp"><Filter>tests</Filter></ClCompile>
     <ClCompile Include="tests\PlanImprovementTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -108,6 +111,8 @@
     <ClInclude Include="algorithms\MissionScheduler.h">
       <Filter>algorithms</Filter>
     </ClInclude>
+    <ClInclude Include="algorithms\CivilizationObjective.h"><Filter>algorithms</Filter></ClInclude>
+    <ClInclude Include="algorithms\CivilizationPlanner.h"><Filter>algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\PlanImprover.h">
       <Filter>algorithms</Filter>
     </ClInclude>

@@ -2,10 +2,13 @@
 #include "DatasetGenerator.h"
 #include "Measurements.h"
 #include <algorithm>
+#include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <unordered_set>
 #include "../algorithms/InfrastructureOptimizer.h"
+#include "../algorithms/CivilizationPlanner.h"
 #include "../algorithms/LogisticsPlanner.h"
 #include "../algorithms/PlanImprover.h"
 #include "../simulation/SimulationEngine.h"
@@ -46,9 +49,9 @@ void addStressClosures(const SchedulingResult& schedule, std::vector<Event>& eve
 }
 
 int runBenchmark(int argc, char* argv[]) {
-    if (argc < 4 || argc > 6 || (argc == 6 && std::string(argv[5]) != "--trace-plan"))
+    if (argc < 4)
         throw std::invalid_argument(
-            "Usage: --benchmark SIZE SEED [MODE [--trace-plan]] (inventory for Phase 1, phase2 for local search)");
+            "Usage: --benchmark SIZE SEED [MODE [--trace-plan] [--objective=PROFILE] [--scenario=CASE]]");
     const std::string name = argv[2];
     const auto size = benchmark::dimensions(name);
     size_t consumed = 0;
@@ -57,11 +60,29 @@ int runBenchmark(int argc, char* argv[]) {
         throw std::invalid_argument("Seed must be an unsigned 32-bit integer.");
     const std::string mode = argc >= 5 ? argv[4] : "custom";
     const bool improve = mode == "phase2";
-    const bool inventoryMode = mode == "inventory" || mode == "inventory-uncached" || improve;
+    const bool civilization = mode == "phase3";
+    const bool inventoryMode = mode == "inventory" || mode == "inventory-uncached" || improve || civilization;
     if (mode != "custom" && mode != "earliest" && mode != "basic" &&
         mode != "all-routes" && mode != "greedy-build" &&
         mode != "stress" && mode != "stress-all-routes" && !inventoryMode)
         throw std::invalid_argument("Unknown benchmark mode.");
+    bool trace = false, reportCivilization = civilization;
+    std::string profile = "balanced", scenario = "standard";
+    for (int i = 5; i < argc; ++i) {
+        const std::string option = argv[i];
+        if (option == "--trace-plan")
+            trace = true;
+        else if (option.starts_with("--objective=")) {
+            profile = option.substr(12);
+            reportCivilization = true;
+        } else if (option.starts_with("--scenario="))
+            scenario = option.substr(11);
+        else
+            throw std::invalid_argument("Unknown benchmark option: " + option);
+    }
+    if (scenario != "standard" && scenario != "scarcity" && scenario != "production-cut")
+        throw std::invalid_argument("Expected standard, scarcity, or production-cut scenario.");
+    const auto coefficients = CivilizationObjective::parseWeights(profile);
 
     benchmark::Measurements measurements;
     std::cout << "Dataset " << name << ", seed " << seed << ", mode " << mode << ": "
@@ -69,14 +90,45 @@ int runBenchmark(int argc, char* argv[]) {
               << " input missions\n";
     measurements.report("generation", 0, 0, true);
     auto data = benchmark::generate(size, seed);
+    if (scenario != "standard") {
+        data.events.clear();
+        if (scenario == "scarcity") {
+            for (auto& stock : data.inventory)
+                stock.available = std::floor(stock.available * 0.4);
+            for (auto& demand : data.aidDemands)
+                demand.available = std::floor(demand.available * 0.4);
+            std::erase_if(data.ships, [](const auto& ship) { return ship.id % 3 != 0; });
+        } else {
+            for (const auto& donor : data.aidDemands) {
+                if (donor.available <= donor.required)
+                    continue;
+                Event event;
+                event.eventType = EventType::ResourceProductionDecrease;
+                event.affectedObjectId = donor.planetId;
+                event.eventTime = 1;
+                event.severity = 1;
+                data.events.push_back(event);
+            }
+        }
+    }
+    const int budget = std::max(50, size.planets / 8);
+    std::unordered_set<int> colonies;
+    for (const auto& colony : data.colonies)
+        colonies.insert(colony.id);
+    const CivilizationObjective objective(data.inventory, data.missions, data.projects,
+        colonies, 30, budget, coefficients);
     std::cout << "Population " << data.population << ", colonies " << data.colonies.size()
               << ", stations " << data.stations.size() << ", spacecraft " << data.ships.size()
               << ", aid locations " << data.aidDemands.size() << ", external events "
               << data.events.size() << '\n';
     if (!data.events.empty()) {
         const auto& sample = data.events.front();
-        std::cout << "Sample disruption: route " << sample.affectedObjectId
-                  << " closes at day " << sample.eventTime << '\n';
+        if (scenario == "production-cut")
+            std::cout << "Sample disruption: production stops at location " << sample.affectedObjectId
+                      << " on day " << sample.eventTime << '\n';
+        else
+            std::cout << "Sample disruption: route " << sample.affectedObjectId
+                      << " closes at day " << sample.eventTime << '\n';
     }
 
     const RouteWeights weights{0.02, 0.03, 0.5, 3.0, 2.0};
@@ -103,6 +155,14 @@ int runBenchmark(int argc, char* argv[]) {
         schedule = PlanImprover::improve(std::move(schedule), data.missions, data.ships,
             data.graph, data.inventory, weights, 30);
     }
+    CivilizationPlan selected;
+    if (civilization) {
+        measurements.report("civilization-planning", 0, 0, true);
+        selected = CivilizationPlanner::choose(std::move(schedule), data.missions, aid,
+            data.inventory, data.aidDemands, data.ships, data.graph, data.projects,
+            objective, colonies, budget, 30, weights);
+        schedule = std::move(selected.schedule);
+    }
     // Alternative suppliers change the source, while obligation ID, quantity and deadline stay fixed.
     for (auto& mission : data.missions)
         if (const auto source = schedule.revisedOrigins.find(mission.id);
@@ -116,9 +176,9 @@ int runBenchmark(int argc, char* argv[]) {
     }
 
     measurements.report("infrastructure", 0, 0, true);
-    const int budget = std::max(50, size.planets / 8);
     const auto buildStarted = benchmark::Clock::now();
-    const auto construction = mode == "greedy-build" ? greedyInfrastructure(data.projects, budget) :
+    const auto construction = civilization ? selected.construction :
+        mode == "greedy-build" ? greedyInfrastructure(data.projects, budget) :
         InfrastructureOptimizer::optimize(data.projects, budget);
     const double infrastructureSeconds = std::chrono::duration<double>(benchmark::Clock::now() - buildStarted).count();
     for (int id : construction.selectedInfrastructureIds) {
@@ -139,6 +199,15 @@ int runBenchmark(int argc, char* argv[]) {
         mode == "all-routes" || mode == "stress-all-routes", 30);
     measurements.report("complete", 0, actual.completed + actual.failed, true);
     benchmark::reportResults(data.missions, size.missions, aid.size(), allocation, schedule, construction,
-        actual, infrastructureSeconds, measurements, inventoryMode, improve, argc == 6);
+        actual, infrastructureSeconds, measurements, inventoryMode, improve, trace);
+    if (reportCivilization) {
+        const auto m = objective.evaluate(actual, construction);
+        std::cout << std::setprecision(12) << "CIVILIZATION,"
+            << (profile.find(',') == std::string::npos ? profile : "custom-weights") << ',' << scenario << ','
+            << m.score << ',' << m.security << ',' << m.criticalSecurity << ',' << m.service << ','
+            << m.infrastructure << ',' << m.operatingPenalty << ',' << m.wastePenalty << ','
+            << m.riskPenalty << ',' << m.criticalEndingShortage << ',' << m.criticalUnserved << ','
+            << selected.evaluated << ',' << selected.feasible << ',' << selected.forecastScore << '\n';
+    }
     return 0;
 }

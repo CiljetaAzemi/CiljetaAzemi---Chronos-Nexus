@@ -147,6 +147,7 @@
     <ClCompile Include="tests\RoutingSimulationTests.cpp" />
     <ClCompile Include="tests\LogisticsTests.cpp" />
     <ClCompile Include="tests\InfrastructureTests.cpp" />
+    <ClCompile Include="tests\CivilizationTests.cpp" />
     <ClCompile Include="tests\InventoryCacheTests.cpp" />
     <ClCompile Include="tests\PlanImprovementTests.cpp" />
     <ClCompile Include="tests\StressTests.cpp" />
@@ -154,6 +155,8 @@
     <ClCompile Include="examples\RoutingDemo.cpp" />
     <ClCompile Include="examples\PlanningDemo.cpp" />
     <ClCompile Include="examples\LogisticsDemo.cpp" />
+    <ClCompile Include="algorithms\CivilizationObjective.cpp" />
+    <ClCompile Include="algorithms\CivilizationPlanner.cpp" />
     <ClCompile Include="algorithms\PlanImprover.cpp" />
     <ClCompile Include="algorithms\Dijkstra.cpp" />
     <ClCompile Include="algorithms\InfrastructureOptimizer.cpp" />
@@ -172,6 +175,8 @@
     <ClInclude Include="tests\TestSupport.h" />
     <ClInclude Include="examples\DemoSections.h" />
     <ClInclude Include="algorithms\InventoryReservations.h" />
+    <ClInclude Include="algorithms\CivilizationObjective.h" />
+    <ClInclude Include="algorithms\CivilizationPlanner.h" />
     <ClInclude Include="algorithms\PlanImprover.h" />
     <ClInclude Include="algorithms\Dijkstra.h" />
     <ClInclude Include="algorithms\InfrastructureOptimizer.h" />

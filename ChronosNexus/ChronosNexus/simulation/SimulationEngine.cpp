@@ -33,11 +33,14 @@ struct Balance {
     double consumption = 0;
     double storage = 1e30;
     double updatedAt = 0;
+    double unserved = 0;
 
     void advance(double now, SimulationResult& result) {
         const double next = stock + (production - consumption) * (now - updatedAt);
         result.waste += std::max(0.0, next - storage);
-        result.stockoutAmount += std::max(0.0, -next);
+        const double missed = std::max(0.0, -next);
+        result.stockoutAmount += missed;
+        unserved += missed;
         stock = std::clamp(next, 0.0, storage);
         updatedAt = now;
     }
@@ -253,7 +256,9 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         for (auto& [type, stock] : resources) {
             stock.advance(now, result);
             result.finalResources[location] += stock.stock;
-            result.remainingShortage += std::max(0.0, stock.target - stock.stock);
+            const double shortage = std::max(0.0, stock.target - stock.stock);
+            result.remainingShortage += shortage;
+            result.resourceOutcomes[location][type] = {shortage, stock.unserved};
         }
     }
     if (progress)
