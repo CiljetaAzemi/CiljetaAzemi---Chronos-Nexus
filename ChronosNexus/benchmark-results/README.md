@@ -111,3 +111,30 @@ Run `--self-test` for the exact tiny and medium stress fixtures. The local count
 All 39 Release x64 runs completed across 13 three-mode groups. The two controls reproduced their archived solution outcomes. Phase 2 accepted 56 of 1,908 trials and pruned 1,093,361 of 1,435,488 examined arcs (76.17%). It recovered one previously rejected mission, displacing another. Completion counts matched Phase 1 in every pair.
 
 Mean timely fulfillment relative to Phase 1 changed by −0.33 percentage points on small, +0.09 on medium, and zero on large. The small continuity seed increased realized ending shortage by 36 units despite passing the nominal shortage guard. The scarcity and donor-cut stress cases matched Phase 1 on completion, timely fulfillment, and shortage. In particular, the scarcity case still left higher ending shortage than the original baseline. The results support constrained routing and dependency recovery on the exact fixtures without establishing a general improvement over Phase 1.
+
+## Experimental Phase 3 evaluation
+
+The [technical report](../../README.md#experimental-civilization-objective) defines the objective, normalization, and planner. The four modes receive the same scenario and obligations in each group and all use the same scoring profile. Production-cut events are visible only to the final simulator. Construction effects from the chosen plan are included in the nominal comparison.
+
+```powershell
+$common = @{
+    Modes = 'custom', 'inventory', 'phase2', 'phase3'
+    TimeoutSeconds = 180
+    OutputDirectory = '.\x64\reproduction\phase3'
+}
+.\ChronosNexus\Run-Benchmarks.ps1 @common -Sizes small,medium,large -Seed 20261118
+.\ChronosNexus\Run-Benchmarks.ps1 @common -Sizes small,medium -Seed 42
+.\ChronosNexus\Run-Benchmarks.ps1 @common -Sizes medium -Seed 42 -Scenario scarcity
+.\ChronosNexus\Run-Benchmarks.ps1 @common -Sizes medium -Seed 42 -Scenario production-cut
+foreach ($profile in 'security', 'service') {
+    .\ChronosNexus\Run-Benchmarks.ps1 @common -Sizes medium -Seed 42 -Scenario scarcity -ObjectiveProfile $profile
+}
+```
+
+The CSV retains the historical score and adds the normalized objective, its components, critical-colony ending shortage and unserved demand, and nominal candidate counts. Completion and execution-failure rates use the fixed total of scheduled plus rejected obligations as the denominator. The existing weighted-cargo columns report all-obligation fulfillment. Engine time includes the extra planning and nominal replays. The historical graph counter describes the selected scheduling path and does not sum discarded Phase 3 proposals. The [run evidence](phase3/results.csv) and [regression output](phase3/self-test.txt) record this evaluation.
+
+On the balanced continuity cases, Phase 3 scored 54.165 on small and 55.168 on medium, versus 54.095 and 55.048 for cached Phase 1. Small completed one fewer obligation and incurred more unserved demand. Medium completed two extra obligations and reduced unserved demand by 33 units, while ending shortage increased by six. On large, Phase 3 matched Phase 2 on measured solution outcomes but took 69.64 seconds versus 24.42 seconds.
+
+Scarcity exposed a policy trade-off. The balanced and security profiles selected 86 completions, with critical-colony ending shortage of 190 and critical unserved demand of four. The service profile selected 87 completions, with those two deficits at 214 and seven. The comparison is within each weight profile. Score values across profiles use different definitions. On the surprise production-cut scenario, Phase 3 matched Phase 2 on the reported quality metrics.
+
+All 36 Release x64 runs completed across nine four-mode groups. Seed 42 also reproduced Phase 2's small and medium standard outcomes under the balanced Phase 3 profile. Standard control outcomes matched the historical Phase 2 evaluation. A repeated small Phase 3 run matched the exact decision trace and objective telemetry. The matrix has one large seed and one timing observation per configuration.

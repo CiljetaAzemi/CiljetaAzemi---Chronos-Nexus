@@ -1,0 +1,10 @@
+Phase 2 exact fixtures: chain 3/3, constrained route 1/1, scarcity guard 0/0, cheaper relocation and swap, terminal resequence 3/3, donor counterexample 1/2.
+Cache stress scarce_sparse: identical plan, 87 completed, 0 stock failures.
+PHASE2_STRESS,scarce_sparse,custom,55,46,484,5.98971,5410,1627,1968.43,0,0
+PHASE2_STRESS,scarce_sparse,inventory,87,0,498,9.84174,5623.52,1530.48,3824.43,0,0
+PHASE2_STRESS,scarce_sparse,phase2,87,0,498,9.84174,5623.52,1530.48,3824.43,78,0
+Cache stress donor_production_cut: identical plan, 255 completed, 0 stock failures.
+PHASE2_STRESS,donor_production_cut,custom,231,41,278,34.9863,2313,614,9184.66,0,0
+PHASE2_STRESS,donor_production_cut,inventory,255,0,295,37.6165,2258,361,10492,0,0
+PHASE2_STRESS,donor_production_cut,phase2,255,0,295,37.6165,2258,361,10492,168,5
+Self-tests passed: route identity, capacity, fuel, overlap, reverse allocation, depletion, inventory, production events, and exact Knapsack.
