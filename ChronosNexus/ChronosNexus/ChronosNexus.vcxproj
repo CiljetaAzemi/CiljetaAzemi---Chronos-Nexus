@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -139,6 +139,22 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="examples\Demonstration.cpp" />
+    <ClCompile Include="benchmarks\DatasetGenerator.cpp" />
+    <ClCompile Include="benchmarks\Measurements.cpp" />
+    <ClCompile Include="benchmarks\Benchmark.cpp" />
+    <ClCompile Include="tests\TestSupport.cpp" />
+    <ClCompile Include="tests\RoutingSimulationTests.cpp" />
+    <ClCompile Include="tests\LogisticsTests.cpp" />
+    <ClCompile Include="tests\InfrastructureTests.cpp" />
+    <ClCompile Include="tests\InventoryCacheTests.cpp" />
+    <ClCompile Include="tests\PlanImprovementTests.cpp" />
+    <ClCompile Include="tests\StressTests.cpp" />
+    <ClCompile Include="tests\RegressionTests.cpp" />
+    <ClCompile Include="examples\RoutingDemo.cpp" />
+    <ClCompile Include="examples\PlanningDemo.cpp" />
+    <ClCompile Include="examples\LogisticsDemo.cpp" />
+    <ClCompile Include="algorithms\PlanImprover.cpp" />
     <ClCompile Include="algorithms\Dijkstra.cpp" />
     <ClCompile Include="algorithms\InfrastructureOptimizer.cpp" />
     <ClCompile Include="algorithms\MissionScheduler.cpp" />
@@ -148,6 +164,15 @@
     <ClCompile Include="simulation\SimulationEngine.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="examples\Demonstration.h" />
+    <ClInclude Include="benchmarks\Benchmark.h" />
+    <ClInclude Include="benchmarks\DatasetGenerator.h" />
+    <ClInclude Include="benchmarks\Measurements.h" />
+    <ClInclude Include="tests\RegressionTests.h" />
+    <ClInclude Include="tests\TestSupport.h" />
+    <ClInclude Include="examples\DemoSections.h" />
+    <ClInclude Include="algorithms\InventoryReservations.h" />
+    <ClInclude Include="algorithms\PlanImprover.h" />
     <ClInclude Include="algorithms\Dijkstra.h" />
     <ClInclude Include="algorithms\InfrastructureOptimizer.h" />
     <ClInclude Include="algorithms\LogisticsPlanner.h" />

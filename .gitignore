@@ -22,3 +22,14 @@ obj/
 *.idb
 *.tlog
 *.lastbuildstate
+*.ipch
+*.iobj
+*.ipdb
+
+# Local benchmark output. Curated CSVs and self-test summaries remain versionable.
+/ChronosNexus/benchmark-results/runs/
+/ChronosNexus/benchmark-results/**/*.stdout.txt
+/ChronosNexus/benchmark-results/**/*.stderr.txt
+/ChronosNexus/benchmark-results/**/build.log
+/ChronosNexus/benchmark-results/**/demo.txt
+/ChronosNexus/benchmark-results/**/binary-sha256.txt

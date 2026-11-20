@@ -1,93 +1,175 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Source Files">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    <Filter Include="algorithms">
+      <UniqueIdentifier>{f472d4c4-85df-438c-bf21-3c9e61b340f1}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    <Filter Include="benchmarks">
+      <UniqueIdentifier>{62c4360e-49f3-43e2-98df-4ab7aa25bb27}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Resource Files">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    <Filter Include="examples">
+      <UniqueIdentifier>{283be419-430b-413a-a7cd-d2521ea857d1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="graph">
+      <UniqueIdentifier>{16e95fb4-2909-46e5-b642-b65ba02331eb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="models">
+      <UniqueIdentifier>{2799ad33-61cc-4dce-b0f6-f255029c91ad}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="simulation">
+      <UniqueIdentifier>{72b3486f-0742-495f-b573-06fabbc19257}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="tests">
+      <UniqueIdentifier>{a4a50f15-59b1-41cf-9125-60080ba94379}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="graph\GalaxyGraph.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="algorithms\Dijkstra.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="algorithms\ResourceAllocator.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="algorithms\MissionScheduler.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="simulation\SimulationEngine.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>algorithms</Filter>
     </ClCompile>
     <ClCompile Include="algorithms\InfrastructureOptimizer.cpp">
-      <Filter>Source Files</Filter>
+      <Filter>algorithms</Filter>
+    </ClCompile>
+    <ClCompile Include="algorithms\MissionScheduler.cpp">
+      <Filter>algorithms</Filter>
+    </ClCompile>
+    <ClCompile Include="algorithms\PlanImprover.cpp">
+      <Filter>algorithms</Filter>
+    </ClCompile>
+    <ClCompile Include="algorithms\ResourceAllocator.cpp">
+      <Filter>algorithms</Filter>
+    </ClCompile>
+    <ClCompile Include="benchmarks\Benchmark.cpp">
+      <Filter>benchmarks</Filter>
+    </ClCompile>
+    <ClCompile Include="benchmarks\DatasetGenerator.cpp">
+      <Filter>benchmarks</Filter>
+    </ClCompile>
+    <ClCompile Include="benchmarks\Measurements.cpp">
+      <Filter>benchmarks</Filter>
+    </ClCompile>
+    <ClCompile Include="examples\Demonstration.cpp">
+      <Filter>examples</Filter>
+    </ClCompile>
+    <ClCompile Include="examples\LogisticsDemo.cpp">
+      <Filter>examples</Filter>
+    </ClCompile>
+    <ClCompile Include="examples\PlanningDemo.cpp">
+      <Filter>examples</Filter>
+    </ClCompile>
+    <ClCompile Include="examples\RoutingDemo.cpp">
+      <Filter>examples</Filter>
+    </ClCompile>
+    <ClCompile Include="graph\GalaxyGraph.cpp">
+      <Filter>graph</Filter>
+    </ClCompile>
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="simulation\SimulationEngine.cpp">
+      <Filter>simulation</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\InventoryCacheTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\LogisticsTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\InfrastructureTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\PlanImprovementTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\RegressionTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\RoutingSimulationTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\StressTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\TestSupport.cpp">
+      <Filter>tests</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="models\Resource.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="models\Route.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="models\Spacecraft.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="models\Mission.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="models\Colony.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="models\Station.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="models\Fleet.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="models\Infrastructure.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="models\Event.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="graph\GalaxyGraph.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="algorithms\Dijkstra.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="models\Planet.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="algorithms\ResourceAllocator.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="algorithms\MissionScheduler.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="algorithms\LogisticsPlanner.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="simulation\SimulationEngine.h">
-      <Filter>Header Files</Filter>
+      <Filter>algorithms</Filter>
     </ClInclude>
     <ClInclude Include="algorithms\InfrastructureOptimizer.h">
-      <Filter>Header Files</Filter>
+      <Filter>algorithms</Filter>
+    </ClInclude>
+    <ClInclude Include="algorithms\InventoryReservations.h">
+      <Filter>algorithms</Filter>
+    </ClInclude>
+    <ClInclude Include="algorithms\LogisticsPlanner.h">
+      <Filter>algorithms</Filter>
+    </ClInclude>
+    <ClInclude Include="algorithms\MissionScheduler.h">
+      <Filter>algorithms</Filter>
+    </ClInclude>
+    <ClInclude Include="algorithms\PlanImprover.h">
+      <Filter>algorithms</Filter>
+    </ClInclude>
+    <ClInclude Include="algorithms\ResourceAllocator.h">
+      <Filter>algorithms</Filter>
+    </ClInclude>
+    <ClInclude Include="benchmarks\Benchmark.h">
+      <Filter>benchmarks</Filter>
+    </ClInclude>
+    <ClInclude Include="benchmarks\DatasetGenerator.h">
+      <Filter>benchmarks</Filter>
+    </ClInclude>
+    <ClInclude Include="benchmarks\Measurements.h">
+      <Filter>benchmarks</Filter>
+    </ClInclude>
+    <ClInclude Include="examples\Demonstration.h">
+      <Filter>examples</Filter>
+    </ClInclude>
+    <ClInclude Include="examples\DemoSections.h">
+      <Filter>examples</Filter>
+    </ClInclude>
+    <ClInclude Include="graph\GalaxyGraph.h">
+      <Filter>graph</Filter>
+    </ClInclude>
+    <ClInclude Include="models\Colony.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="models\Event.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="models\Fleet.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="models\Infrastructure.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="models\Mission.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="models\Planet.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="models\Resource.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="models\Route.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="models\Spacecraft.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="models\Station.h">
+      <Filter>models</Filter>
+    </ClInclude>
+    <ClInclude Include="simulation\SimulationEngine.h">
+      <Filter>simulation</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\RegressionTests.h">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\TestSupport.h">
+      <Filter>tests</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

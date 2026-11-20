@@ -1,0 +1,5 @@
+scenario,inventory_mode,ships,events,completed,failed,rejected,inventory_failures,weighted_timely_percent,ending_shortage,fuel
+scarce_sparse,0,139,0,55,46,484,43,5.989706094569244,5410,1968.4299999999996
+scarce_sparse,1,139,0,87,0,498,0,9.8417432295925735,5623.521739130435,3824.4299999999998
+donor_production_cut,0,415,40,231,41,278,40,34.986302771251076,2313,9184.6599999999999
+donor_production_cut,1,415,40,255,0,295,0,37.616512635807723,2258,10492

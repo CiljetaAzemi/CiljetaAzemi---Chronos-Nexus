@@ -14,7 +14,8 @@ enum class EventType {
     ResourceUnavailable,
     HighPriorityMission,
     RouteRiskIncrease,
-    SpacecraftMechanicalFailure
+    SpacecraftMechanicalFailure,
+    ConstructionCompleted
 };
 
 // Types of objects affected by events
