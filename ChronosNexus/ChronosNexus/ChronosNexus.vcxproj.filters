@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="algorithms">
@@ -19,6 +19,8 @@
     <Filter Include="simulation">
       <UniqueIdentifier>{72b3486f-0742-495f-b573-06fabbc19257}</UniqueIdentifier>
     </Filter>
+    <Filter Include="scenario"><UniqueIdentifier>{f9a46b39-c906-4d21-8aa8-fa1a0e4a4394}</UniqueIdentifier></Filter>
+    <Filter Include="third_party"><UniqueIdentifier>{34ebbe29-e67e-4833-a8ad-e197506c824c}</UniqueIdentifier></Filter>
     <Filter Include="tests">
       <UniqueIdentifier>{a4a50f15-59b1-41cf-9125-60080ba94379}</UniqueIdentifier>
     </Filter>
@@ -80,6 +82,15 @@
     </ClCompile>
     <ClCompile Include="tests\CivilizationTests.cpp"><Filter>tests</Filter></ClCompile>
     <ClCompile Include="tests\PlanImprovementTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="scenario\ScenarioJson.cpp">
+      <Filter>scenario</Filter>
+    </ClCompile>
+    <ClCompile Include="scenario\ScenarioResult.cpp">
+      <Filter>scenario</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\ScenarioJsonTests.cpp">
       <Filter>tests</Filter>
     </ClCompile>
     <ClCompile Include="tests\RegressionTests.cpp">
@@ -170,6 +181,12 @@
     <ClInclude Include="simulation\SimulationEngine.h">
       <Filter>simulation</Filter>
     </ClInclude>
+    <ClInclude Include="scenario\ScenarioJson.h">
+      <Filter>scenario</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\nlohmann\json.hpp">
+      <Filter>third_party</Filter>
+    </ClInclude>
     <ClInclude Include="tests\RegressionTests.h">
       <Filter>tests</Filter>
     </ClInclude>
@@ -177,4 +194,5 @@
       <Filter>tests</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup><None Include="examples\scenario.json"><Filter>examples</Filter></None></ItemGroup>
 </Project>

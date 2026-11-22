@@ -27,4 +27,5 @@ void testPlanImprovement();
 void testStressScenarios();
 void testInfrastructure();
 void testCivilization();
+void testScenarioJson();
 }

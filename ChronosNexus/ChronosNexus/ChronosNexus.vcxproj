@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -151,6 +151,9 @@
     <ClCompile Include="tests\InventoryCacheTests.cpp" />
     <ClCompile Include="tests\PlanImprovementTests.cpp" />
     <ClCompile Include="tests\StressTests.cpp" />
+    <ClCompile Include="scenario\ScenarioJson.cpp" />
+    <ClCompile Include="scenario\ScenarioResult.cpp" />
+    <ClCompile Include="tests\ScenarioJsonTests.cpp" />
     <ClCompile Include="tests\RegressionTests.cpp" />
     <ClCompile Include="examples\RoutingDemo.cpp" />
     <ClCompile Include="examples\PlanningDemo.cpp" />
@@ -171,6 +174,8 @@
     <ClInclude Include="benchmarks\Benchmark.h" />
     <ClInclude Include="benchmarks\DatasetGenerator.h" />
     <ClInclude Include="benchmarks\Measurements.h" />
+    <ClInclude Include="scenario\ScenarioJson.h" />
+    <ClInclude Include="third_party\nlohmann\json.hpp" />
     <ClInclude Include="tests\RegressionTests.h" />
     <ClInclude Include="tests\TestSupport.h" />
     <ClInclude Include="examples\DemoSections.h" />
@@ -196,6 +201,7 @@
     <ClInclude Include="models\Station.h" />
     <ClInclude Include="simulation\SimulationEngine.h" />
   </ItemGroup>
+  <ItemGroup><None Include="examples\scenario.json" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

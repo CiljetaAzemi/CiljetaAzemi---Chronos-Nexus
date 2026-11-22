@@ -10,7 +10,8 @@ int runSelfTests() {
     regression::testStressScenarios();
     regression::testInfrastructure();
     regression::testCivilization();
+    regression::testScenarioJson();
     std::cout << "Self-tests passed: route identity, capacity, fuel, overlap, reverse allocation, "
-                 "depletion, inventory, production events, and exact Knapsack.\n";
+                 "depletion, inventory, production events, exact Knapsack, civilization planning, and scenario JSON.\n";
     return 0;
 }
