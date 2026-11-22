@@ -75,18 +75,33 @@ The `phase2` mode improves a cached inventory-aware plan through bounded, depend
 
 Use the [Visual Studio build and troubleshooting guide](ChronosNexus/BUILD.md) to build Release x64 and run the regression suite. The [experimental evaluation](ChronosNexus/benchmark-results/README.md) defines the datasets, variants, resource limits, and output fields.
 
+### External JSON scenarios
+
+Open `ChronosNexus/ChronosNexus.slnx` in Visual Studio and select **Release | x64**. In **ChronosNexus > Properties > Configuration Properties > Debugging**, set **Working Directory** to `$(ProjectDir)` and **Command Arguments** to the following, then press **Ctrl+F5**.
+
+```text
+--scenario-file "$(ProjectDir)examples\scenario.json" --output "$(TargetDir)scenario-result.json"
+```
+
+Use the [example scenario](ChronosNexus/ChronosNexus/examples/scenario.json) as a template. Set `"version": 1` and provide `budget` and the `locations`, `routes`, `inventory`, `spacecraft`, and `missions` arrays. The horizon defaults to 30 simulation days. `projects` and `events` are optional. Routes are directed. Every input mission needs a matching resource account at both endpoints. Mark both donor and recipient inventory accounts with `"aid": true` to allow automatic aid proposals for that resource.
+
+Distances, fuel, cargo, and operating costs use the scenario's consistent units. Time is measured in simulation days, production and consumption in resource units per day, and construction cost and budget in whole credits. Supported resource names are `food`, `water`, `energy`, `fuel`, `medicine`, `rare_minerals`, and `construction_materials`. The simulator accepts `route_blocked`, `wormhole_collapse`, `pirate_blockade`, `route_risk_increase`, `ship_destroyed`, `ship_failure`, and `production_decrease`. A production decrease can be marked `"announced": true` to include it in the forecast. Construction projects can increase food production.
+
+The JSON mode uses the existing civilization planner with the balanced objective profile. The result's `planned` section reports proposed allocations, committed assignments and route IDs, selected construction, and a nominal forecast. The `simulation` section reports realized deliveries, mission status, resource outcomes, and aggregate costs and replanning. A planning rejection appears in `rejected_mission_ids`. Its simulator status may remain pending. Realized route traces are unavailable from the simulator. The output file is written to the build directory in the Visual Studio example above. Successful runs produce the report file without printing a console summary.
+
 ## Project structure
 
 The Visual Studio solution and benchmark runner are in `ChronosNexus/`. The C++ project is in `ChronosNexus/ChronosNexus/`.
 
 | Location | Responsibility |
 |---|---|
-| `main.cpp` | Dispatches the no-argument demonstration, `--benchmark`, and `--self-test`. |
+| `main.cpp` | Dispatches the demonstration, benchmarks, regression tests, and external scenario mode. |
 | `models/`, `graph/` | Domain records and the directed weighted graph. |
 | `algorithms/`, `simulation/` | Planning algorithms and discrete-event execution. |
 | `benchmarks/` | Benchmark orchestration, deterministic dataset generation, and measurement and reporting utilities. |
 | `tests/` | Regression suites for routing, simulation, allocation, inventory, scheduling, construction, and plan improvement. |
-| `examples/` | Console demonstrations of routing, planning, and disruption handling. |
+| `examples/` | Console demonstrations and an example JSON scenario. |
+| `scenario/` | Validates external scenarios and exports plans and simulation outcomes. |
 | `ChronosNexus/benchmark-results/` | Archived CSV evidence and regression summaries. New runs default to the ignored `runs/` subdirectory. |
 
 ## Experimental civilization objective
