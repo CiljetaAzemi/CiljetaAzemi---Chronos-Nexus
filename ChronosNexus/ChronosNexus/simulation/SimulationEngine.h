@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <unordered_map>
+#include <optional>
 
 #include "../models/Event.h"
 #include "../models/Mission.h"
@@ -37,6 +38,18 @@ struct SimulationResult {
     std::unordered_map<int, MissionStatus> missionStatuses;
     struct Delivery { double amount; double arrival; };
     std::unordered_map<int, Delivery> deliveries;
+
+    struct ReplanningDecision {
+        enum class Reason { BlockedRoute, UnavailableSpacecraft, UrgentMission, DependentAssignment };
+        int eventId;
+        int targetId;
+        double eventTime;
+        int missionId;
+        Reason reason;
+        std::optional<ScheduledMission> previous;
+        std::optional<ScheduledMission> replacement;
+    };
+    std::vector<ReplanningDecision> replanningDecisions;
 };
 
 class SimulationEngine {

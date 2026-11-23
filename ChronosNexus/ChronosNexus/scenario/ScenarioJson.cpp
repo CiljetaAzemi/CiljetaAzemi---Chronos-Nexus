@@ -199,7 +199,8 @@ Input loadJson(std::istream& source) {
         s.operatingCost = number(row, "operating_cost", 0);
         data.ships.push_back(std::move(s));
     });
-    rows(root, "missions", [&](const Json& row) {
+    auto readMission = [&](const Json& row) {
+        check(row.is_object(), "mission: expected an object");
         Mission m;
         m.id = idOf(row, missions);
         m.origin = location(row, "origin");
@@ -217,7 +218,10 @@ Input loadJson(std::istream& source) {
         m.requirements.minFuelCapacity = number(row, "min_fuel_capacity", 0);
         m.requirements.minSpeed = number(row, "min_speed", 0);
         m.requirements.minReliability = probability(row, "min_reliability", 0);
-        data.missions.push_back(m);
+        return m;
+    };
+    rows(root, "missions", [&](const Json& row) {
+        data.missions.push_back(readMission(row));
     });
     rows(root, "projects", [&](const Json& row) {
         Infrastructure p;
@@ -238,7 +242,9 @@ Input loadJson(std::istream& source) {
         e.id = idOf(row, events);
         e.eventTime = time(row, "time");
         const auto type = get<std::string>(row, "type");
-        e.affectedObjectId = get<int>(row, "target");
+        const bool urgent = type == "urgent_mission" || type == "emergency_medical_request";
+        if (!urgent)
+            e.affectedObjectId = get<int>(row, "target");
         static const std::map<std::string, EventType> routeTypes{
             {"route_blocked", EventType::RouteBlocked}, {"wormhole_collapse", EventType::WormholeCollapse},
             {"pirate_blockade", EventType::PirateBlockade}, {"route_risk_increase", EventType::RouteRiskIncrease}};
@@ -251,6 +257,14 @@ Input loadJson(std::istream& source) {
             check(ships.contains(e.affectedObjectId), "target: unknown spacecraft");
             e.affectedObjectType = AffectedObjectType::Spacecraft;
             e.eventType = type == "ship_destroyed" ? EventType::SpacecraftDestroyed : EventType::SpacecraftMechanicalFailure;
+        } else if (urgent) {
+            e.eventType = type == "urgent_mission" ? EventType::HighPriorityMission : EventType::EmergencyMedicalRequest;
+            e.urgentMission = readMission(row.at("mission"));
+            check(e.urgentMission->deadline >= e.eventTime, "mission deadline precedes its event");
+            check(type != "emergency_medical_request" || e.urgentMission->cargoType == ResourceType::Medicine,
+                "emergency medical requests must deliver medicine");
+            e.affectedObjectType = AffectedObjectType::Mission;
+            e.affectedObjectId = e.urgentMission->id;
         } else if (type == "production_decrease") {
             e.eventType = EventType::ResourceProductionDecrease;
             e.affectedObjectType = AffectedObjectType::Planet;

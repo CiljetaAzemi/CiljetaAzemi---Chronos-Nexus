@@ -30,6 +30,23 @@ const char* statusName(MissionStatus status) {
     return names.at(static_cast<size_t>(status));
 }
 
+const char* reasonName(SimulationResult::ReplanningDecision::Reason reason) {
+    using Reason = SimulationResult::ReplanningDecision::Reason;
+    switch (reason) {
+    case Reason::BlockedRoute: return "blocked_route";
+    case Reason::UnavailableSpacecraft: return "unavailable_spacecraft";
+    case Reason::UrgentMission: return "urgent_mission";
+    case Reason::DependentAssignment: return "dependent_assignment";
+    }
+    throw std::logic_error("Unknown replanning reason");
+}
+
+Json flightDecision(const ScheduledMission& entry) {
+    return {{"spacecraft_id", entry.spacecraftId}, {"departure", entry.departureTime},
+        {"expected_arrival", entry.arrivalTime}, {"planned_fuel", entry.fuelUsed},
+        {"locations", entry.path}, {"route_ids", entry.routeIds}};
+}
+
 Json resourceOutcomes(const SimulationResult& result) {
     std::map<std::pair<int, ResourceType>, SimulationResult::ResourceOutcome> ordered;
     for (const auto& [location, resources] : result.resourceOutcomes)
@@ -61,6 +78,9 @@ std::vector<Mission> proposeAid(const benchmark::Scenario& data, const RouteWeig
     long long nextId = 0;
     for (const auto& mission : data.missions)
         nextId = std::max(nextId, static_cast<long long>(mission.id) + 1);
+    for (const auto& event : data.events)
+        if (event.urgentMission)
+            nextId = std::max(nextId, static_cast<long long>(event.urgentMission->id) + 1);
     std::vector<Mission> aid;
     for (const auto& [type, demands] : byResource) {
         const auto allocation = ResourceAllocator::allocateWithRoutes(demands, data.graph, weights);
@@ -127,10 +147,11 @@ void writeResult(Input input, std::ostream& destination) {
     Json assignments = Json::array();
     for (const auto& row : schedule.scheduled) {
         const auto& mission = *missions.at(row.missionId);
-        assignments.push_back({{"mission_id", row.missionId}, {"spacecraft_id", row.spacecraftId},
-            {"origin", mission.origin}, {"destination", mission.destination}, {"resource", resourceName(mission.cargoType)},
-            {"amount", mission.cargoAmount}, {"departure", row.departureTime}, {"expected_arrival", row.arrivalTime},
-            {"planned_fuel", row.fuelUsed}, {"locations", row.path}, {"route_ids", row.routeIds}});
+        auto assignment = flightDecision(row);
+        assignment.update({{"mission_id", row.missionId}, {"origin", mission.origin},
+            {"destination", mission.destination}, {"resource", resourceName(mission.cargoType)},
+            {"amount", mission.cargoAmount}});
+        assignments.push_back(std::move(assignment));
     }
     Json projects = Json::array();
     for (const auto& project : data.projects) {
@@ -142,8 +163,15 @@ void writeResult(Input input, std::ostream& destination) {
                  project.resourceImpact.contains(ResourceType::Food) ? project.resourceImpact.at(ResourceType::Food) : 0}});
     }
     Json outcomes = Json::array();
+    std::unordered_set<int> urgentIds;
+    for (const auto& event : data.events)
+        if (event.urgentMission) {
+            missions.emplace(event.urgentMission->id, &*event.urgentMission);
+            urgentIds.insert(event.urgentMission->id);
+        }
     for (const auto& [id, mission] : missions) {
-        Json outcome{{"mission_id", id}, {"kind", aidIds.contains(id) ? "aid" : "input"}, {"deadline", mission->deadline}};
+        const char* kind = urgentIds.contains(id) ? "urgent" : aidIds.contains(id) ? "aid" : "input";
+        Json outcome{{"mission_id", id}, {"kind", kind}, {"deadline", mission->deadline}};
         const auto status = actual.missionStatuses.find(id);
         outcome["status"] = status == actual.missionStatuses.end() ? Json(nullptr) : Json(statusName(status->second));
         if (const auto delivery = actual.deliveries.find(id); delivery != actual.deliveries.end()) {
@@ -152,6 +180,13 @@ void writeResult(Input input, std::ostream& destination) {
         }
         outcomes.push_back(std::move(outcome));
     }
+    Json repairs = Json::array();
+    for (const auto& record : actual.replanningDecisions)
+        repairs.push_back({{"event_id", record.eventId}, {"target_id", record.targetId}, {"event_time", record.eventTime},
+            {"mission_id", record.missionId}, {"reason", reasonName(record.reason)},
+            {"recovered", record.replacement.has_value()},
+            {"previous", record.previous ? flightDecision(*record.previous) : Json(nullptr)},
+            {"replacement", record.replacement ? flightDecision(*record.replacement) : Json(nullptr)}});
     const Json nominal{
         {"completed", forecast.completed}, {"failed", forecast.failed},
         {"delivered_amount", forecast.deliveredAmount}, {"remaining_shortage", forecast.remainingShortage},
@@ -168,6 +203,7 @@ void writeResult(Input input, std::ostream& destination) {
         {"completed", actual.completed}, {"failed", actual.failed}, {"scheduled", actual.scheduled},
         {"inventory_failures", actual.inventoryFailures}, {"events_processed", actual.eventsProcessed},
         {"unsupported_events", actual.unsupportedEvents}, {"rerouted", actual.rerouted}, {"replans", actual.replans},
+        {"replanning_seconds", actual.replanSeconds}, {"replanning_decisions", repairs},
         {"distance", actual.distance}, {"fuel", actual.fuel}, {"risk", actual.risk}, {"waste", actual.waste},
         {"transportation_cost", actual.transportationCost}, {"delivered_amount", actual.deliveredAmount},
         {"remaining_shortage", actual.remainingShortage}, {"stockout_amount", actual.stockoutAmount},

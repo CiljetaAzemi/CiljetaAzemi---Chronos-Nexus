@@ -1,5 +1,7 @@
 #pragma once
 #include "Resource.h"
+#include "Mission.h"
+#include <optional>
 
 // Types of dynamic events
 enum class EventType {
@@ -50,4 +52,5 @@ public:
     ResourceType resourceType = ResourceType::Food;
     double changeAmount = 0.0;
     double duration = 0.0;
+    std::optional<Mission> urgentMission;
 };

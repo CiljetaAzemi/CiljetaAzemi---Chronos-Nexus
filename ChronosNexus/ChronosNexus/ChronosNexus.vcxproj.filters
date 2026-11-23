@@ -68,6 +68,12 @@
       <Filter>graph</Filter>
     </ClCompile>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="simulation\RecoveryPlanner.cpp">
+      <Filter>simulation</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\DynamicReplanningTests.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="simulation\SimulationEngine.cpp">
       <Filter>simulation</Filter>
     </ClCompile>
@@ -178,6 +184,9 @@
     <ClInclude Include="models\Station.h">
       <Filter>models</Filter>
     </ClInclude>
+    <ClInclude Include="simulation\RecoveryPlanner.h">
+      <Filter>simulation</Filter>
+    </ClInclude>
     <ClInclude Include="simulation\SimulationEngine.h">
       <Filter>simulation</Filter>
     </ClInclude>
@@ -195,4 +204,5 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup><None Include="examples\scenario.json"><Filter>examples</Filter></None></ItemGroup>
+  <ItemGroup><None Include="examples\replanning.json"><Filter>examples</Filter></None></ItemGroup>
 </Project>

@@ -1,10 +1,13 @@
 #include "SimulationEngine.h"
+#include "RecoveryPlanner.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <queue>
+#include <set>
 #include <stdexcept>
+#include <tuple>
 #include <unordered_set>
 
 namespace {
@@ -77,7 +80,10 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             throw std::invalid_argument("Duplicate spacecraft ID.");
 
     std::unordered_set<int> disabled;
-    std::unordered_set<int> inFlight;
+    struct Flight { size_t entry; double arrival; };
+    std::unordered_map<int, Flight> inFlight;
+    auto entries = schedule.scheduled;
+    std::set<size_t> pending;
     std::priority_queue<Action, std::vector<Action>, Later> queue;
     for (size_t i = 0; i < events.size(); ++i)
         if (std::isfinite(events[i].eventTime) && events[i].eventTime >= 0)
@@ -91,13 +97,149 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         if (status != MissionStatus::Pending)
             throw std::invalid_argument("Duplicate scheduled mission.");
         status = MissionStatus::Scheduled;
+        pending.insert(i);
         queue.push({entry.departureTime, ActionType::Departure, i});
     }
 
     double now = 0;
+    using Decision = SimulationResult::ReplanningDecision;
+    auto findReplacement = [&](const Mission& mission, const ScheduledMission* previous,
+        const std::set<size_t>& held = {}) {
+        std::vector<ResourceDemand> localBalances;
+        for (const int location : std::set{mission.origin, mission.destination}) {
+            const auto row = balances.find(location);
+            if (row == balances.end() || !row->second.contains(mission.cargoType))
+                return std::optional<ScheduledMission>{};
+            const auto& stock = row->second.at(mission.cargoType);
+            const double available = std::clamp(stock.stock +
+                (stock.production - stock.consumption) * (now - stock.updatedAt), 0.0, stock.storage);
+            localBalances.push_back({location, available, stock.target, 0, mission.cargoType,
+                stock.production, stock.consumption, stock.storage});
+        }
+        InventoryReservations inventory(localBalances);
+        const auto relevant = [&](int location) {
+            return location == mission.origin || location == mission.destination;
+        };
+        std::vector<recovery::ShipPlan> plans;
+        std::unordered_map<int, size_t> byShip;
+        for (const auto& [id, current] : ships) {
+            if (disabled.contains(id))
+                continue;
+            auto state = current;
+            if (const auto flight = inFlight.find(id); flight != inFlight.end()) {
+                const auto& airborne = *missionById.at(entries[flight->second.entry].missionId);
+                state.currentLocation = airborne.destination;
+                if (mission.cargoType == airborne.cargoType && relevant(airborne.destination))
+                    inventory.addConfirmedArrival(airborne.destination, airborne.cargoType,
+                        flight->second.arrival - now, airborne.cargoAmount);
+            }
+            byShip.emplace(id, plans.size());
+            plans.push_back({std::move(state), {}});
+        }
+        // Add each side separately, since the other account may be outside this repair.
+        auto reserveBooking = [&](size_t index, bool includeArrival) {
+            const auto& entry = entries[index];
+            const auto& booked = *missionById.at(entry.missionId);
+            if (booked.cargoType != mission.cargoType)
+                return;
+            if (relevant(booked.origin) && (includeArrival || booked.origin != mission.destination))
+                inventory.addPlannedDeparture(booked.origin, booked.cargoType,
+                    std::max(0.0, entry.departureTime - now), booked.cargoAmount);
+            if (includeArrival && relevant(booked.destination))
+                inventory.addConfirmedArrival(booked.destination, booked.cargoType,
+                    std::max(0.0, entry.arrivalTime - now), booked.cargoAmount);
+        };
+        for (const auto index : pending) {
+            reserveBooking(index, true);
+            const auto& entry = entries[index];
+            if (const auto ship = byShip.find(entry.spacecraftId); ship != byShip.end())
+                plans[ship->second].pending.push_back({missionById.at(entry.missionId), &entry});
+        }
+        // Reserve independent held withdrawals. A later booking that relies on
+        // this delivery is checked after its carrier's arrival is known.
+        for (const auto index : held)
+            reserveBooking(index, false);
+        return recovery::findAssignment(mission, previous, active, plans, inventory, now, result.nodesExplored);
+    };
+
+    auto applyRepair = [&](const Event& event, Decision::Reason reason, const Mission& mission,
+        std::optional<ScheduledMission> previous, std::optional<ScheduledMission> replacement) {
+        ++result.replans;
+        result.replanningDecisions.push_back({event.id, event.affectedObjectId, now,
+            mission.id, reason, previous, replacement});
+        auto& status = result.missionStatuses.at(mission.id);
+        if (!replacement) {
+            status = MissionStatus::Failed;
+            ++result.failed;
+            return;
+        }
+        if (!previous)
+            ++result.scheduled;
+        else if (previous->routeIds != replacement->routeIds)
+            ++result.rerouted;
+        status = MissionStatus::Scheduled;
+        pending.insert(entries.size());
+        queue.push({replacement->departureTime, ActionType::Departure, entries.size()});
+        entries.push_back(std::move(*replacement));
+    };
+
+    auto repairPending = [&](const Event& event, bool route) {
+        std::vector<size_t> affected;
+        for (const auto index : pending) {
+            const auto& entry = entries[index];
+            if (route ? std::count(entry.routeIds.begin(), entry.routeIds.end(), event.affectedObjectId) != 0
+                      : entry.spacecraftId == event.affectedObjectId)
+                affected.push_back(index);
+        }
+        const auto earlier = [&](size_t a, size_t b) {
+            return std::tie(entries[a].departureTime, entries[a].missionId) <
+                std::tie(entries[b].departureTime, entries[b].missionId);
+        };
+        std::sort(affected.begin(), affected.end(), earlier);
+        for (const auto index : affected)
+            pending.erase(index);
+        for (const auto index : affected) {
+            const auto previous = entries[index];
+            const auto& mission = *missionById.at(previous.missionId);
+            const auto start = std::chrono::steady_clock::now();
+            std::set<size_t> held;
+            if (route) {
+                // A detour can change the ship's arrival time or leave it at the old
+                // origin. Hold later bookings on that ship while repairing its prefix.
+                for (const auto next : pending)
+                    if (entries[next].spacecraftId == previous.spacecraftId && earlier(index, next))
+                        held.insert(next);
+                for (const auto next : held)
+                    pending.erase(next);
+            }
+            auto replacement = findReplacement(mission, &previous, held);
+            applyRepair(event, route ? Decision::Reason::BlockedRoute : Decision::Reason::UnavailableSpacecraft,
+                mission, previous, std::move(replacement));
+
+            std::vector<size_t> successors(held.begin(), held.end());
+            std::sort(successors.begin(), successors.end(), earlier);
+            for (const auto next : successors) {
+                held.erase(next);
+                const auto original = entries[next];
+                const auto& followUp = *missionById.at(original.missionId);
+                auto repaired = findReplacement(followUp, &original, held);
+                if (repaired && repaired->spacecraftId == original.spacecraftId &&
+                    repaired->departureTime == original.departureTime && repaired->arrivalTime == original.arrivalTime &&
+                    repaired->routeIds == original.routeIds) {
+                    pending.insert(next);
+                } else {
+                    applyRepair(event, Decision::Reason::DependentAssignment, followUp, original, std::move(repaired));
+                }
+            }
+            result.replanSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        }
+    };
+
     while (!queue.empty()) {
         const auto action = queue.top();
         queue.pop();
+        if (action.type == ActionType::Departure && !pending.contains(action.index))
+            continue;
         now = action.time;
         if (progress)
             progress(static_cast<size_t>(result.completed + result.failed));
@@ -109,7 +251,12 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             case EventType::RouteBlocked:
             case EventType::WormholeCollapse:
             case EventType::PirateBlockade:
-                applied = active.blockRoute(id);
+                if (const auto* edge = active.findRoute(id); edge && edge->isAvailable) {
+                    applied = active.blockRoute(id);
+                    repairPending(event, true);
+                } else {
+                    applied = active.blockRoute(id);
+                }
                 break;
             case EventType::RouteRiskIncrease:
                 applied = active.updateRouteRisk(id, event.severity);
@@ -117,6 +264,20 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             case EventType::SpacecraftDestroyed:
             case EventType::SpacecraftMechanicalFailure:
                 applied = ships.contains(id) && disabled.insert(id).second;
+                if (applied)
+                    repairPending(event, false);
+                break;
+            case EventType::EmergencyMedicalRequest:
+            case EventType::HighPriorityMission:
+                if (event.urgentMission && missionById.emplace(event.urgentMission->id, &*event.urgentMission).second) {
+                    const auto& mission = *event.urgentMission;
+                    result.missionStatuses.emplace(mission.id, MissionStatus::Pending);
+                    const auto start = std::chrono::steady_clock::now();
+                    auto replacement = findReplacement(mission, nullptr);
+                    applyRepair(event, Decision::Reason::UrgentMission, mission, std::nullopt, std::move(replacement));
+                    result.replanSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+                    applied = true;
+                }
                 break;
             case EventType::ResourceProductionDecrease:
             case EventType::ConstructionCompleted: {
@@ -145,10 +306,11 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             continue;
         }
 
-        const auto& entry = schedule.scheduled[action.index];
+        const auto& entry = entries[action.index];
         const auto& mission = *missionById.at(entry.missionId);
         auto& status = result.missionStatuses.at(mission.id);
         auto fail = [&] {
+            pending.erase(action.index);
             status = MissionStatus::Failed;
             ++result.failed;
         };
@@ -241,7 +403,8 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         stock.stock -= mission.cargoAmount;
         ship.currentFuel -= metrics.fuel;
         ship.availableAt = arrival;
-        inFlight.insert(ship.id);
+        pending.erase(action.index);
+        inFlight.emplace(ship.id, Flight{action.index, arrival});
         status = MissionStatus::InProgress;
         // Account for the full route at departure. Closures affect future departures only.
         result.distance += metrics.distance;

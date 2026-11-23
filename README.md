@@ -89,6 +89,16 @@ Distances, fuel, cargo, and operating costs use the scenario's consistent units.
 
 The JSON mode uses the existing civilization planner with the balanced objective profile. The result's `planned` section reports proposed allocations, committed assignments and route IDs, selected construction, and a nominal forecast. The `simulation` section reports realized deliveries, mission status, resource outcomes, and aggregate costs and replanning. A planning rejection appears in `rejected_mission_ids`. Its simulator status may remain pending. Realized route traces are unavailable from the simulator. The output file is written to the build directory in the Visual Studio example above. Successful runs produce the report file without printing a console summary.
 
+### Dynamic replanning
+
+The simulator repairs pending assignments after a spacecraft becomes unavailable or an exact route edge closes. A route delay can also invalidate later bookings on the same spacecraft. When an `urgent_mission` or `emergency_medical_request` event arrives, its nested `mission` uses the same fields as an input mission and becomes eligible at the event time. Mission IDs are unique across initial and urgent missions. Medical requests must carry medicine.
+
+The simulator keeps pending actions indexed separately from completed and in-flight missions. For each invalidated assignment or new request, it checks local spacecraft slots, reserved fuel, and the two affected resource accounts. Candidates compete over the existing weighted, minimum-fuel, and minimum-time paths. Fixed bookings keep their departure time, route, and spacecraft when feasible. A successful repair reserves cargo and storage over time before the new departure is queued. This is a bounded heuristic. It can miss feasible alternatives that require an empty repositioning trip, a different path from the three searches, or moving an unrelated booking. A later event can invalidate a successful repair.
+
+A spacecraft event scans the pending list. A route event additionally checks each pending path for its exact route ID. For one repair attempt with `P` pending bookings, sorting ship bookings takes at most `O(P log P)`. The attempt measures existing booked paths, makes at most three shortest-path searches, and checks a bounded number of departure times per compatible slot against the affected inventory timelines. It does not regenerate the civilization plan.
+
+In the Visual Studio JSON command above, replace `examples\scenario.json` with `examples\replanning.json` and the output name with `replanning-result.json`. Inspect `simulation.replanning_decisions` for the triggering event, previous assignment, and replacement. A null replacement means recovery found no feasible assignment. Compare with `simulation.missions` for the final outcome.
+
 ## Project structure
 
 The Visual Studio solution and benchmark runner are in `ChronosNexus/`. The C++ project is in `ChronosNexus/ChronosNexus/`.

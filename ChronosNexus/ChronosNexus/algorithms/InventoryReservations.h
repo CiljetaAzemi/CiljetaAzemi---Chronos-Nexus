@@ -69,6 +69,16 @@ public:
     using Key = std::pair<int, ResourceType>;
     struct Shortages { double ending = 0; double unserved = 0; };
 
+    void addConfirmedArrival(int location, ResourceType type, double time, double amount) {
+        if (auto* account = find(location, type))
+            account->changes[time].in += amount;
+    }
+
+    void addPlannedDeparture(int location, ResourceType type, double time, double amount) {
+        if (auto* account = find(location, type))
+            account->changes[time].out += amount;
+    }
+
     InventoryReservations subset(const std::vector<Key>& keys) const {
         InventoryReservations copy({});
         for (const auto& [location, type] : keys)

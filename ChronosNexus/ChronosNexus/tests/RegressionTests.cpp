@@ -11,7 +11,9 @@ int runSelfTests() {
     regression::testInfrastructure();
     regression::testCivilization();
     regression::testScenarioJson();
+    regression::testDynamicReplanning();
     std::cout << "Self-tests passed: route identity, capacity, fuel, overlap, reverse allocation, "
-                 "depletion, inventory, production events, exact Knapsack, civilization planning, and scenario JSON.\n";
+                 "depletion, inventory, production events, exact Knapsack, civilization planning, "
+                 "scenario JSON, and dynamic replanning.\n";
     return 0;
 }

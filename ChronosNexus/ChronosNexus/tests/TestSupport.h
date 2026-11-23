@@ -28,4 +28,5 @@ void testStressScenarios();
 void testInfrastructure();
 void testCivilization();
 void testScenarioJson();
+void testDynamicReplanning();
 }

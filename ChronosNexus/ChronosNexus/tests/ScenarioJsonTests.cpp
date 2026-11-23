@@ -54,6 +54,27 @@ void testScenarioJson() {
         result.at("simulation").at("missions").at(0).at("status") == "failed" &&
         !result.at("simulation").at("missions").at(0).contains("arrival"),
         "Export mixed forecast and realized outcomes");
+    const auto& repair = result.at("simulation").at("replanning_decisions").at(0);
+    require(repair.at("reason") == "blocked_route" && repair.at("previous").at("route_ids") == Json::array({10}) &&
+        repair.at("replacement").is_null() && repair.at("recovered") == false,
+        "Export must retain the invalidated assignment and unsuccessful recovery.");
+
+    auto urgent = fixture;
+    auto mission = urgent["missions"][0];
+    urgent["missions"] = Json::array();
+    urgent["events"][0] = {{"id", 8}, {"time", 1}, {"type", "urgent_mission"}, {"mission", mission}};
+    std::ostringstream urgentOutput;
+    scenario::writeResult(parse(urgent.dump()), urgentOutput);
+    const auto urgentResult = Json::parse(urgentOutput.str());
+    const auto& urgentRepair = urgentResult.at("simulation").at("replanning_decisions").at(0);
+    require(urgentResult.at("planned").at("assignments").empty() &&
+        urgentRepair.at("previous").is_null() && urgentRepair.at("recovered") == true &&
+        urgentRepair.at("replacement").at("departure") == 1 &&
+        urgentResult.at("simulation").at("missions").at(0).at("kind") == "urgent" &&
+        urgentResult.at("simulation").at("completed") == 1,
+        "Urgent JSON missions must become visible only at their event time.");
+    urgent["missions"].push_back(mission);
+    requireInvalid(urgent.dump(), "events[0]: duplicate id");
 
     requireInvalid("{", "Invalid scenario JSON");
     auto invalid = fixture;

@@ -167,6 +167,8 @@
     <ClCompile Include="algorithms\ResourceAllocator.cpp" />
     <ClCompile Include="graph\GalaxyGraph.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="simulation\RecoveryPlanner.cpp" />
+    <ClCompile Include="tests\DynamicReplanningTests.cpp" />
     <ClCompile Include="simulation\SimulationEngine.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -199,9 +201,11 @@
     <ClInclude Include="models\Route.h" />
     <ClInclude Include="models\Spacecraft.h" />
     <ClInclude Include="models\Station.h" />
+    <ClInclude Include="simulation\RecoveryPlanner.h" />
     <ClInclude Include="simulation\SimulationEngine.h" />
   </ItemGroup>
   <ItemGroup><None Include="examples\scenario.json" /></ItemGroup>
+  <ItemGroup><None Include="examples\replanning.json" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
