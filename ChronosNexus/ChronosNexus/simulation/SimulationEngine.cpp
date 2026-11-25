@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <deque>
+#include <limits>
+#include <map>
 #include <queue>
 #include <set>
 #include <stdexcept>
@@ -11,7 +14,7 @@
 #include <unordered_set>
 
 namespace {
-enum class ActionType { Event, Arrival, Departure };
+enum class ActionType { Event, Forecast, Arrival, Departure };
 
 struct Action {
     double time;
@@ -54,7 +57,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
     const std::vector<ResourceDemand>& planets, const std::vector<Mission>& missions,
     const std::vector<Spacecraft>& spacecraft, const SchedulingResult& schedule,
     const std::vector<Event>& events, const std::function<void(size_t)>& progress,
-    bool recheckAllDepartures, double minimumHorizon) {
+    bool recheckAllDepartures, double minimumHorizon, const std::vector<Event>* knownSupplyEvents) {
     SimulationResult result;
     result.scheduled = static_cast<int>(schedule.scheduled.size());
     GalaxyGraph active = galaxy;
@@ -103,64 +106,102 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
 
     double now = 0;
     using Decision = SimulationResult::ReplanningDecision;
-    auto findReplacement = [&](const Mission& mission, const ScheduledMission* previous,
-        const std::set<size_t>& held = {}) {
-        std::vector<ResourceDemand> localBalances;
-        for (const int location : std::set{mission.origin, mission.destination}) {
-            const auto row = balances.find(location);
-            if (row == balances.end() || !row->second.contains(mission.cargoType))
-                return std::optional<ScheduledMission>{};
-            const auto& stock = row->second.at(mission.cargoType);
-            const double available = std::clamp(stock.stock +
-                (stock.production - stock.consumption) * (now - stock.updatedAt), 0.0, stock.storage);
-            localBalances.push_back({location, available, stock.target, 0, mission.cargoType,
-                stock.production, stock.consumption, stock.storage});
+    using Key = InventoryReservations::Key;
+    auto accountAtNow = [&](const Key& key) {
+        const auto& stock = balances.at(key.first).at(key.second);
+        const double available = std::clamp(stock.stock +
+            (stock.production - stock.consumption) * (now - stock.updatedAt), 0.0, stock.storage);
+        return ResourceDemand{key.first, available, stock.target, 0, key.second,
+            stock.production, stock.consumption, stock.storage};
+    };
+    std::map<Key, std::vector<const Event*>> futureSupply;
+    if (knownSupplyEvents)
+        for (const auto& event : *knownSupplyEvents)
+            if (std::isfinite(event.eventTime) && std::isfinite(event.severity) &&
+                (event.eventType == EventType::ResourceProductionDecrease ||
+                    event.eventType == EventType::ConstructionCompleted))
+                futureSupply[{event.affectedObjectId, event.resourceType}].push_back(&event);
+    for (auto& [key, changes] : futureSupply)
+        std::stable_sort(changes.begin(), changes.end(), [](const Event* a, const Event* b) {
+            return a->eventTime < b->eventTime;
+        });
+    bool beforeFirstEvent = true;
+    auto inventoryFor = [&](const std::set<Key>& keys, const std::set<size_t>& held = {},
+        const Mission* replacing = nullptr) {
+        std::vector<ResourceDemand> initial;
+        for (const auto& key : keys)
+            initial.push_back(accountAtNow(key));
+        InventoryReservations inventory(initial);
+        for (const auto& account : initial) {
+            const auto it = futureSupply.find({account.planetId, account.type});
+            if (it == futureSupply.end())
+                continue;
+            double production = account.production;
+            for (const auto* event : it->second) {
+                if (event->eventTime < now || (!beforeFirstEvent && event->eventTime == now))
+                    continue;
+                const double next = event->eventType == EventType::ConstructionCompleted
+                    ? production + std::max(0.0, event->severity)
+                    : production * (1 - std::clamp(event->severity, 0.0, 1.0));
+                inventory.addRateChange(account.planetId, account.type, event->eventTime - now, next - production);
+                production = next;
+            }
         }
-        InventoryReservations inventory(localBalances);
-        const auto relevant = [&](int location) {
-            return location == mission.origin || location == mission.destination;
+        for (const auto& [id, flight] : inFlight) {
+            if (disabled.contains(id))
+                continue;
+            const auto& cargo = *missionById.at(entries[flight.entry].missionId);
+            inventory.addConfirmedArrival(cargo.destination, cargo.cargoType, flight.arrival - now, cargo.cargoAmount);
+        }
+        auto addBooking = [&](size_t index, bool includeArrival) {
+            const auto& row = entries[index];
+            const auto& job = *missionById.at(row.missionId);
+            if (includeArrival || !replacing || job.origin != replacing->destination)
+                inventory.addPlannedDeparture(job.origin, job.cargoType,
+                    std::max(0.0, row.departureTime - now), job.cargoAmount);
+            if (includeArrival)
+                inventory.addConfirmedArrival(job.destination, job.cargoType,
+                    std::max(0.0, row.arrivalTime - now), job.cargoAmount);
         };
+        for (auto index : pending)
+            addBooking(index, true);
+        // A held successor's delivery is uncertain until its carrier's arrival is checked.
+        for (auto index : held)
+            addBooking(index, false);
+        return inventory;
+    };
+    auto findReplacement = [&](const Mission& mission, const ScheduledMission* previous,
+        const std::set<size_t>& held = {}, recovery::SupplySearch* supply = nullptr,
+        const InventoryReservations* forecastInventory = nullptr) {
+        const std::set<Key> keys{{mission.origin, mission.cargoType}, {mission.destination, mission.cargoType}};
+        for (const auto& [location, type] : keys) {
+            const auto row = balances.find(location);
+            if (row == balances.end() || !row->second.contains(type))
+                return std::optional<ScheduledMission>{};
+        }
+        auto inventory = forecastInventory
+            ? forecastInventory->subset({{mission.origin, mission.cargoType}, {mission.destination, mission.cargoType}})
+            : inventoryFor(keys, held, &mission);
         std::vector<recovery::ShipPlan> plans;
         std::unordered_map<int, size_t> byShip;
         for (const auto& [id, current] : ships) {
             if (disabled.contains(id))
                 continue;
             auto state = current;
-            if (const auto flight = inFlight.find(id); flight != inFlight.end()) {
-                const auto& airborne = *missionById.at(entries[flight->second.entry].missionId);
-                state.currentLocation = airborne.destination;
-                if (mission.cargoType == airborne.cargoType && relevant(airborne.destination))
-                    inventory.addConfirmedArrival(airborne.destination, airborne.cargoType,
-                        flight->second.arrival - now, airborne.cargoAmount);
-            }
+            if (const auto flight = inFlight.find(id); flight != inFlight.end())
+                state.currentLocation = missionById.at(entries[flight->second.entry].missionId)->destination;
             byShip.emplace(id, plans.size());
             plans.push_back({std::move(state), {}});
         }
-        // Add each side separately, since the other account may be outside this repair.
-        auto reserveBooking = [&](size_t index, bool includeArrival) {
-            const auto& entry = entries[index];
-            const auto& booked = *missionById.at(entry.missionId);
-            if (booked.cargoType != mission.cargoType)
-                return;
-            if (relevant(booked.origin) && (includeArrival || booked.origin != mission.destination))
-                inventory.addPlannedDeparture(booked.origin, booked.cargoType,
-                    std::max(0.0, entry.departureTime - now), booked.cargoAmount);
-            if (includeArrival && relevant(booked.destination))
-                inventory.addConfirmedArrival(booked.destination, booked.cargoType,
-                    std::max(0.0, entry.arrivalTime - now), booked.cargoAmount);
-        };
         for (const auto index : pending) {
-            reserveBooking(index, true);
             const auto& entry = entries[index];
             if (const auto ship = byShip.find(entry.spacecraftId); ship != byShip.end())
                 plans[ship->second].pending.push_back({missionById.at(entry.missionId), &entry});
         }
-        // Reserve independent held withdrawals. A later booking that relies on
-        // this delivery is checked after its carrier's arrival is known.
-        for (const auto index : held)
-            reserveBooking(index, false);
-        return recovery::findAssignment(mission, previous, active, plans, inventory, now, result.nodesExplored);
+        return recovery::findAssignment(mission, previous, active, plans, inventory, now,
+            result.nodesExplored, supply);
     };
+
 
     auto applyRepair = [&](const Event& event, Decision::Reason reason, const Mission& mission,
         std::optional<ScheduledMission> previous, std::optional<ScheduledMission> replacement) {
@@ -181,6 +222,147 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         pending.insert(entries.size());
         queue.push({replacement->departureTime, ActionType::Departure, entries.size()});
         entries.push_back(std::move(*replacement));
+    };
+
+    std::set<Key> accounts, refresh;
+    std::deque<Mission> preventiveMissions;
+    std::unordered_set<int> urgentIds;
+    long long nextPreventiveId = 0;
+    if (knownSupplyEvents) {
+        for (const auto& [location, row] : balances)
+            for (const auto& [type, stock] : row)
+                accounts.emplace(location, type);
+        for (const auto& event : events)
+            if (event.urgentMission)
+                urgentIds.insert(event.urgentMission->id);
+    }
+    auto predictAndPrevent = [&](const std::set<Key>& affected, const Event& trigger) {
+        if (affected.empty() || now > minimumHorizon)
+            return;
+        // Include all same-resource accounts so donor security can be checked too.
+        std::set<ResourceType> types;
+        for (const auto& key : affected)
+            types.insert(key.second);
+        std::set<Key> relevant;
+        for (const auto& key : accounts)
+            if (types.contains(key.second))
+                relevant.insert(key);
+        auto inventory = inventoryFor(relevant);
+        std::unordered_set<int> shipLocations;
+        for (const auto& [id, ship] : ships) {
+            if (disabled.contains(id))
+                continue;
+            if (const auto flight = inFlight.find(id); flight != inFlight.end())
+                shipLocations.insert(missionById.at(entries[flight->second.entry].missionId)->destination);
+            else
+                shipLocations.insert(ship.currentLocation);
+        }
+        for (const auto index : pending)
+            shipLocations.insert(missionById.at(entries[index].missionId)->destination);
+        const double remaining = minimumHorizon - now;
+        auto forecast = [&](const Key& key) {
+            const auto row = inventory.project(key.first, key.second, remaining);
+            return SimulationResult::ShortageForecast{key.first, key.second, now,
+                row.stock, row.endingShortage, row.unserved,
+                row.depletion ? std::optional<double>(now + *row.depletion) : std::nullopt};
+        };
+        const auto needsSupply = [&](const SimulationResult::ShortageForecast& row) {
+            return row.depletionTime && (*row.depletionTime < minimumHorizon ||
+                row.unserved > 0 || row.endingShortage > 0);
+        };
+        std::vector<SimulationResult::ShortageForecast> risk;
+        for (const auto& key : affected) {
+            auto row = forecast(key);
+            result.shortageForecasts.push_back(row);
+            if (needsSupply(row))
+                risk.push_back(row);
+        }
+        std::sort(risk.begin(), risk.end(), [](const auto& a, const auto& b) {
+            return std::tie(a.depletionTime, a.location, a.resource) <
+                std::tie(b.depletionTime, b.location, b.resource);
+        });
+        for (const auto& riskRow : risk) {
+            const Key key{riskRow.location, riskRow.resource};
+            const auto before = forecast(key);
+            if (!needsSupply(before))
+                continue;
+            auto residual = before;
+            bool accepted = false;
+            // Every shipment in this batch must beat the original depletion time.
+            const double deadline = std::nextafter(*before.depletionTime, now);
+            if (deadline > now) {
+                auto lowerPriority = [](const auto& a, const auto& b) {
+                    return a.first != b.first ? a.first < b.first : a.second > b.second;
+                };
+                using Donor = std::pair<double, int>;
+                std::priority_queue<Donor, std::vector<Donor>, decltype(lowerPriority)> donors(lowerPriority);
+                auto addDonor = [&](int location) {
+                    if (!shipLocations.contains(location))
+                        return;
+                    const auto supply = inventory.project(location, key.second, remaining);
+                    const double surplus = supply.stock - balances.at(location).at(key.second).target;
+                    if (surplus > 0 && !supply.depletion)
+                        donors.emplace(surplus, location);
+                };
+                for (const auto& source : relevant)
+                    if (source.first != key.first && source.second == key.second)
+                        addDonor(source.first);
+                const auto started = std::chrono::steady_clock::now();
+                const double storage = balances.at(key.first).at(key.second).storage;
+                while (!donors.empty() && (needsSupply(residual) || residual.endingShortage > 0)) {
+                    const auto [surplus, donor] = donors.top();
+                    donors.pop();
+                    while (nextPreventiveId < std::numeric_limits<int>::max() &&
+                        (missionById.contains(static_cast<int>(nextPreventiveId)) ||
+                            urgentIds.contains(static_cast<int>(nextPreventiveId))))
+                        ++nextPreventiveId;
+                    if (nextPreventiveId == std::numeric_limits<int>::max())
+                        break;
+                    Mission job;
+                    job.id = static_cast<int>(nextPreventiveId);
+                    job.origin = donor;
+                    job.destination = key.first;
+                    job.cargoType = key.second;
+                    job.deadline = deadline;
+                    const double need = residual.unserved + residual.endingShortage;
+                    const double desired = need > 0 ? need : 1.0;
+                    job.cargoAmount = std::min({desired, surplus, storage});
+                    // Ignore amounts too small to change the account balances reliably.
+                    const double scale = std::max({1.0, desired, accountAtNow(key).available,
+                        accountAtNow({donor, key.second}).available});
+                    recovery::SupplySearch search{remaining, 8 * std::numeric_limits<double>::epsilon() * scale};
+                    if (job.cargoAmount < search.minimumCargo)
+                        continue;
+                    auto replacement = findReplacement(job, nullptr, {}, &search, &inventory);
+                    // Booking more inbound cargo cannot free a donor slot or create
+                    // storage at this recipient. Retire suppliers the search exhausts.
+                    if (!replacement)
+                        continue;
+                    job.cargoAmount = search.assignedCargo;
+                    ++nextPreventiveId;
+                    preventiveMissions.push_back(job);
+                    missionById.emplace(job.id, &preventiveMissions.back());
+                    result.missionStatuses.emplace(job.id, MissionStatus::Pending);
+                    inventory.adjust(job.origin, job.destination, job.cargoType,
+                        replacement->departureTime - now, replacement->arrivalTime - now, job.cargoAmount);
+                    const auto after = forecast(key);
+                    result.preventiveDecisions.push_back({residual, job, replacement, after});
+                    residual = after;
+                    accepted = true;
+                    Event cause = trigger;
+                    cause.affectedObjectId = key.first;
+                    applyRepair(cause, Decision::Reason::PreventiveSupply, job, {}, std::move(replacement));
+                    shipLocations.insert(key.first);
+                    // Only this supplier's surplus changed. It may have another ship
+                    // or a later slot, so rank it again against all remaining suppliers.
+                    addDonor(donor);
+                }
+                if (accepted)
+                    result.replanSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            }
+            if (!accepted)
+                result.preventiveDecisions.push_back({before, {}, {}, before});
+        }
     };
 
     auto repairPending = [&](const Event& event, bool route) {
@@ -235,6 +417,9 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         }
     };
 
+    if (knownSupplyEvents)
+        predictAndPrevent(accounts, Event{});
+    beforeFirstEvent = false;
     while (!queue.empty()) {
         const auto action = queue.top();
         queue.pop();
@@ -243,6 +428,11 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         now = action.time;
         if (progress)
             progress(static_cast<size_t>(result.completed + result.failed));
+        if (action.type == ActionType::Forecast) {
+            predictAndPrevent(refresh, events[action.index]);
+            refresh.clear();
+            continue;
+        }
         if (action.type == ActionType::Event) {
             const auto& event = events[action.index];
             const auto id = event.affectedObjectId;
@@ -293,6 +483,11 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                     b.production += std::max(0.0, event.severity);
                 else
                     b.production *= 1 - std::clamp(event.severity, 0.0, 1.0);
+                if (knownSupplyEvents && now <= minimumHorizon) {
+                    if (refresh.empty())
+                        queue.push({now, ActionType::Forecast, action.index});
+                    refresh.emplace(id, event.resourceType);
+                }
                 applied = true;
                 break;
             }

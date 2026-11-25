@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "budget": 0,
+  "horizon": 30,
+  "locations": [
+    {"id": 1, "type": "planet", "name": "Food Depot"},
+    {"id": 2, "type": "colony", "name": "Planet A", "parent_planet": 1}
+  ],
+  "routes": [
+    {"id": 10, "from": 1, "to": 2, "distance": 4, "travel_time": 1, "fuel": 1, "capacity": 4000}
+  ],
+  "inventory": [
+    {"location": 1, "resource": "food", "stock": 6000, "target": 2000, "storage": 8000},
+    {"location": 2, "resource": "food", "stock": 10000, "target": 1000, "storage": 15000, "production": 300, "consumption": 700}
+  ],
+  "spacecraft": [
+    {"id": 4, "location": 1, "cargo_capacity": 4000, "fuel_capacity": 5, "fuel": 5, "speed": 1}
+  ],
+  "missions": []
+}

@@ -37,6 +37,7 @@ const char* reasonName(SimulationResult::ReplanningDecision::Reason reason) {
     case Reason::UnavailableSpacecraft: return "unavailable_spacecraft";
     case Reason::UrgentMission: return "urgent_mission";
     case Reason::DependentAssignment: return "dependent_assignment";
+    case Reason::PreventiveSupply: return "preventive_supply";
     }
     throw std::logic_error("Unknown replanning reason");
 }
@@ -45,6 +46,33 @@ Json flightDecision(const ScheduledMission& entry) {
     return {{"spacecraft_id", entry.spacecraftId}, {"departure", entry.departureTime},
         {"expected_arrival", entry.arrivalTime}, {"planned_fuel", entry.fuelUsed},
         {"locations", entry.path}, {"route_ids", entry.routeIds}};
+}
+
+Json shortageForecast(const SimulationResult::ShortageForecast& row) {
+    return {{"location", row.location}, {"resource", resourceName(row.resource)},
+        {"calculated_at", row.calculatedAt}, {"ending_stock", row.endingStock},
+        {"ending_shortage", row.endingShortage}, {"unserved", row.unserved},
+        {"depletion_time", row.depletionTime ? Json(*row.depletionTime) : Json(nullptr)}};
+}
+
+Json shortagePrediction(const SimulationResult& result) {
+    Json forecasts = Json::array();
+    for (const auto& row : result.shortageForecasts)
+        forecasts.push_back(shortageForecast(row));
+    Json decisions = Json::array();
+    for (const auto& decision : result.preventiveDecisions) {
+        Json row{{"before", shortageForecast(decision.before)}, {"after", shortageForecast(decision.after)},
+            {"assignment", decision.assignment ? flightDecision(*decision.assignment) : Json(nullptr)},
+            {"mission", nullptr}};
+        if (decision.mission) {
+            const auto& mission = *decision.mission;
+            row["mission"] = {{"id", mission.id}, {"origin", mission.origin}, {"destination", mission.destination},
+                {"resource", resourceName(mission.cargoType)}, {"amount", mission.cargoAmount},
+                {"deadline", mission.deadline}};
+        }
+        decisions.push_back(std::move(row));
+    }
+    return {{"forecasts", forecasts}, {"preventive_decisions", decisions}};
 }
 
 Json resourceOutcomes(const SimulationResult& result) {
@@ -140,9 +168,9 @@ void writeResult(Input input, std::ostream& destination) {
     nominalEvents.insert(nominalEvents.end(), builds.begin(), builds.end());
     data.events.insert(data.events.end(), builds.begin(), builds.end());
     const auto forecast = SimulationEngine::run(data.graph, data.inventory, data.missions, data.ships,
-        schedule, nominalEvents, {}, false, input.horizon);
+        schedule, nominalEvents, {}, false, input.horizon, &nominalEvents);
     const auto actual = SimulationEngine::run(data.graph, data.inventory, data.missions, data.ships,
-        schedule, data.events, {}, false, input.horizon);
+        schedule, data.events, {}, false, input.horizon, &nominalEvents);
 
     Json assignments = Json::array();
     for (const auto& row : schedule.scheduled) {
@@ -169,8 +197,15 @@ void writeResult(Input input, std::ostream& destination) {
             missions.emplace(event.urgentMission->id, &*event.urgentMission);
             urgentIds.insert(event.urgentMission->id);
         }
+    std::unordered_set<int> preventiveIds;
+    for (const auto& decision : actual.preventiveDecisions)
+        if (decision.mission) {
+            missions.emplace(decision.mission->id, &*decision.mission);
+            preventiveIds.insert(decision.mission->id);
+        }
     for (const auto& [id, mission] : missions) {
-        const char* kind = urgentIds.contains(id) ? "urgent" : aidIds.contains(id) ? "aid" : "input";
+        const char* kind = preventiveIds.contains(id) ? "preventive" : urgentIds.contains(id) ? "urgent" :
+            aidIds.contains(id) ? "aid" : "input";
         Json outcome{{"mission_id", id}, {"kind", kind}, {"deadline", mission->deadline}};
         const auto status = actual.missionStatuses.find(id);
         outcome["status"] = status == actual.missionStatuses.end() ? Json(nullptr) : Json(statusName(status->second));
@@ -182,7 +217,8 @@ void writeResult(Input input, std::ostream& destination) {
     }
     Json repairs = Json::array();
     for (const auto& record : actual.replanningDecisions)
-        repairs.push_back({{"event_id", record.eventId}, {"target_id", record.targetId}, {"event_time", record.eventTime},
+        repairs.push_back({{"event_id", record.eventId >= 0 ? Json(record.eventId) : Json(nullptr)},
+            {"target_id", record.targetId}, {"event_time", record.eventTime},
             {"mission_id", record.missionId}, {"reason", reasonName(record.reason)},
             {"recovered", record.replacement.has_value()},
             {"previous", record.previous ? flightDecision(*record.previous) : Json(nullptr)},
@@ -190,7 +226,8 @@ void writeResult(Input input, std::ostream& destination) {
     const Json nominal{
         {"completed", forecast.completed}, {"failed", forecast.failed},
         {"delivered_amount", forecast.deliveredAmount}, {"remaining_shortage", forecast.remainingShortage},
-        {"resources", resourceOutcomes(forecast)}, {"civilization", score(objective.evaluate(forecast, construction))}
+        {"resources", resourceOutcomes(forecast)}, {"shortage_prediction", shortagePrediction(forecast)},
+        {"civilization", score(objective.evaluate(forecast, construction))}
     };
     const Json planned{
         {"assignments", assignments}, {"rejected_mission_ids", schedule.rejectedMissionIds},
@@ -208,6 +245,7 @@ void writeResult(Input input, std::ostream& destination) {
         {"transportation_cost", actual.transportationCost}, {"delivered_amount", actual.deliveredAmount},
         {"remaining_shortage", actual.remainingShortage}, {"stockout_amount", actual.stockoutAmount},
         {"missions", outcomes}, {"resources", resourceOutcomes(actual)},
+        {"shortage_prediction", shortagePrediction(actual)},
         {"civilization", score(objective.evaluate(actual, construction))}
     };
     const Json result{

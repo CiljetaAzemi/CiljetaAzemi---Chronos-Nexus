@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -58,9 +59,9 @@ public:
         if (!feasible || !commit) {
             outgoing.out = oldOutgoing;
             incoming.in = oldIncoming;
-            if (outgoing.in == 0 && outgoing.out == 0)
+            if (outgoing.empty())
                 source->changes.erase(departure);
-            if (incoming.in == 0 && incoming.out == 0)
+            if (incoming.empty())
                 sink->changes.erase(arrival);
         }
         return feasible;
@@ -68,6 +69,49 @@ public:
 
     using Key = std::pair<int, ResourceType>;
     struct Shortages { double ending = 0; double unserved = 0; };
+    struct Projection {
+        double stock = 0;
+        double endingShortage = 0;
+        double unserved = 0;
+        std::optional<double> depletion;
+    };
+
+    void addRateChange(int location, ResourceType type, double time, double delta) {
+        if (auto* account = find(location, type))
+            account->changes[time].rateDelta += delta;
+    }
+
+    Projection project(int location, ResourceType type, double horizon) const {
+        const auto* account = find(location, type);
+        if (!account)
+            return {};
+        Projection result;
+        result.stock = account->initial;
+        double rate = account->rate;
+        double last = 0;
+        auto advanceTo = [&](double time, bool final) {
+            const double raw = result.stock + rate * (time - last);
+            if (!result.depletion && rate < 0 && (raw < 0 || (final && raw == 0)))
+                result.depletion = last + result.stock / -rate;
+            result.unserved += std::max(0.0, -raw);
+            result.stock = std::clamp(raw, 0.0, account->capacity);
+            last = time;
+        };
+        for (const auto& [time, change] : account->changes) {
+            if (time > horizon)
+                break;
+            advanceTo(time, false);
+            const double after = std::min(account->capacity, result.stock + change.in) - change.out;
+            if (after < 0 && !result.depletion)
+                result.depletion = time;
+            result.unserved += std::max(0.0, -after);
+            result.stock = std::max(0.0, after);
+            rate += change.rateDelta;
+        }
+        advanceTo(horizon, true);
+        result.endingShortage = std::max(0.0, account->target - result.stock);
+        return result;
+    }
 
     void addConfirmedArrival(int location, ResourceType type, double time, double amount) {
         if (auto* account = find(location, type))
@@ -101,11 +145,11 @@ public:
             return false;
         auto& outgoing = source->changes[departure];
         outgoing.out += signedAmount;
-        if (outgoing.in == 0 && outgoing.out == 0)
+        if (outgoing.empty())
             source->changes.erase(departure);
         auto& incoming = sink->changes[arrival];
         incoming.in += signedAmount;
-        if (incoming.in == 0 && incoming.out == 0)
+        if (incoming.empty())
             sink->changes.erase(arrival);
         return true;
     }
@@ -145,7 +189,12 @@ public:
 
 private:
     static constexpr size_t trialLimit = 12;
-    struct Change { double in = 0; double out = 0; };
+    struct Change {
+        double in = 0;
+        double out = 0;
+        double rateDelta = 0;
+        bool empty() const { return in == 0 && out == 0 && rateDelta == 0; }
+    };
     struct Account {
         double initial;
         double rate;
@@ -167,21 +216,23 @@ private:
         return const_cast<Account*>(static_cast<const InventoryReservations&>(*this).find(location, type));
     }
 
-    static double advance(const Account& account, double stock, double days) {
-        return std::clamp(stock + account.rate * days, 0.0, account.capacity);
+    static double advance(const Account& account, double stock, double rate, double days) {
+        return std::clamp(stock + rate * days, 0.0, account.capacity);
     }
 
     static bool valid(const Account& account) {
         double stock = account.initial;
         double previous = 0;
+        double rate = account.rate;
         for (const auto& [time, change] : account.changes) {
-            stock = advance(account, stock, time - previous);
+            stock = advance(account, stock, rate, time - previous);
             if (change.in < 0 || change.out < 0 || change.in > account.capacity - stock)
                 return false;
             stock += change.in;
             if (change.out > stock)
                 return false;
             stock -= change.out;
+            rate += change.rateDelta;
             previous = time;
         }
         return true;
@@ -192,13 +243,14 @@ private:
         const size_t limit = times.size() + trialLimit;
         double stock = account.initial;
         double previous = 0;
+        double rate = account.rate;
         auto segment = [&](double end) {
             const double start = std::max(earliest, previous);
             if (start >= end || times.size() >= limit)
                 return;
-            const double available = advance(account, stock, start - previous);
+            const double available = advance(account, stock, rate, start - previous);
             const double slack = withdrawal ? available : account.capacity - available;
-            const double improvement = withdrawal ? account.rate : -account.rate;
+            const double improvement = withdrawal ? rate : -rate;
             if (slack >= amount)
                 times.push_back(start - offset);
             else if (improvement > 0) {
@@ -215,7 +267,8 @@ private:
             if (time > latest)
                 break;
             segment(time);
-            stock = advance(account, stock, time - previous) + change.in - change.out;
+            stock = advance(account, stock, rate, time - previous) + change.in - change.out;
+            rate += change.rateDelta;
             previous = time;
             if (time >= earliest && times.size() < limit) {
                 const double candidate = time - offset;

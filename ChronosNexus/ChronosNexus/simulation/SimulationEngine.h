@@ -40,7 +40,7 @@ struct SimulationResult {
     std::unordered_map<int, Delivery> deliveries;
 
     struct ReplanningDecision {
-        enum class Reason { BlockedRoute, UnavailableSpacecraft, UrgentMission, DependentAssignment };
+        enum class Reason { BlockedRoute, UnavailableSpacecraft, UrgentMission, DependentAssignment, PreventiveSupply };
         int eventId;
         int targetId;
         double eventTime;
@@ -50,6 +50,24 @@ struct SimulationResult {
         std::optional<ScheduledMission> replacement;
     };
     std::vector<ReplanningDecision> replanningDecisions;
+
+    struct ShortageForecast {
+        int location;
+        ResourceType resource;
+        double calculatedAt;
+        double endingStock;
+        double endingShortage;
+        double unserved;
+        std::optional<double> depletionTime;
+    };
+    struct Prevention {
+        ShortageForecast before;
+        std::optional<Mission> mission;
+        std::optional<ScheduledMission> assignment;
+        ShortageForecast after;
+    };
+    std::vector<ShortageForecast> shortageForecasts;
+    std::vector<Prevention> preventiveDecisions;
 };
 
 class SimulationEngine {
@@ -63,7 +81,8 @@ public:
         const std::vector<Event>& events,
         const std::function<void(size_t)>& progress = {},
         bool recheckAllDepartures = false,
-        double minimumHorizon = 0
+        double minimumHorizon = 0,
+        const std::vector<Event>* knownSupplyEvents = nullptr
     );
 };
 

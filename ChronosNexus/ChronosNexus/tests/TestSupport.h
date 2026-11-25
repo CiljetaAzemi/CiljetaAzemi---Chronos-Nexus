@@ -29,4 +29,5 @@ void testInfrastructure();
 void testCivilization();
 void testScenarioJson();
 void testDynamicReplanning();
+void testShortagePrediction();
 }

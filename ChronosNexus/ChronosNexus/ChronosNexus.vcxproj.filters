@@ -205,4 +205,5 @@
   </ItemGroup>
   <ItemGroup><None Include="examples\scenario.json"><Filter>examples</Filter></None></ItemGroup>
   <ItemGroup><None Include="examples\replanning.json"><Filter>examples</Filter></None></ItemGroup>
+  <ItemGroup><None Include="examples\shortage.json"><Filter>examples</Filter></None></ItemGroup>
 </Project>

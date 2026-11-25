@@ -206,6 +206,7 @@
   </ItemGroup>
   <ItemGroup><None Include="examples\scenario.json" /></ItemGroup>
   <ItemGroup><None Include="examples\replanning.json" /></ItemGroup>
+  <ItemGroup><None Include="examples\shortage.json" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

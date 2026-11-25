@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <numeric>
 #include <tuple>
 
 namespace recovery {
@@ -59,8 +60,12 @@ std::vector<Slot> availableSlots(const Mission& mission,
 
 std::optional<ScheduledMission> findAssignment(const Mission& mission,
     const ScheduledMission* previous, const GalaxyGraph& graph, std::vector<ShipPlan>& ships,
-    InventoryReservations& inventory, double now, long long& nodesExplored) {
-    const auto slots = availableSlots(mission, graph, ships, now);
+    InventoryReservations& inventory, double now, long long& nodesExplored,
+    SupplySearch* supply) {
+    auto smallest = mission;
+    if (supply)
+        smallest.cargoAmount = supply->minimumCargo;
+    const auto slots = availableSlots(smallest, graph, ships, now);
     if (slots.empty())
         return std::nullopt;
     const RouteWeights weights = previous ? previous->weights : RouteWeights{0.02, 0.03, 0.5, 3.0, 2.0};
@@ -71,7 +76,15 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
             row.arrivalTime, row.fuelUsed, row.spacecraftId};
     };
     std::optional<ScheduledMission> best;
+    const auto donorBefore = supply
+        ? inventory.project(mission.origin, mission.cargoType, supply->horizon) : InventoryReservations::Projection{};
+    const auto recipientBefore = supply
+        ? inventory.project(mission.destination, mission.cargoType, supply->horizon) : InventoryReservations::Projection{};
     auto consider = [&](const PathResult& path) {
+        double routeCargo = mission.cargoAmount;
+        if (supply)
+            for (int edge : path.routeIds)
+                routeCargo = std::min(routeCargo, graph.findRoute(edge)->maxCapacity);
         for (const auto& slot : slots) {
             const auto& ship = slot.ship;
             if (path.metrics.fuel > slot.unreservedFuel)
@@ -80,19 +93,72 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
             const double earliest = std::max(now, ship.availableAt);
             const double limit = slot.next ? std::min(mission.deadline, slot.next->decision->departureTime) : mission.deadline;
             const double latest = limit - duration;
-            const auto times = inventory.departures(mission.origin, mission.destination, mission.cargoType,
-                earliest - now, latest - now, duration, mission.cargoAmount);
+            const double upper = supply ? std::min(routeCargo, ship.maxCargoCapacity) : mission.cargoAmount;
+            if (upper < smallest.cargoAmount || latest < earliest || (supply && upper < supply->assignedCargo))
+                continue;
+            auto times = inventory.departures(mission.origin, mission.destination, mission.cargoType,
+                earliest - now, latest - now, duration, upper);
+            if (supply && upper > smallest.cargoAmount) {
+                const auto smallTimes = inventory.departures(mission.origin, mission.destination, mission.cargoType,
+                    earliest - now, latest - now, duration, smallest.cargoAmount);
+                times.insert(times.end(), smallTimes.begin(), smallTimes.end());
+                times.push_back(latest - now);
+                std::sort(times.begin(), times.end());
+                times.erase(std::unique(times.begin(), times.end()), times.end());
+            }
+            auto feasibleAt = [&](double departure, double cargo, double& arrival) {
+                auto job = mission;
+                job.cargoAmount = cargo;
+                if (departure < earliest || !MissionScheduler::feasible(job, ship, departure, path.metrics, arrival) ||
+                    arrival > limit || !inventory.reserve(mission.origin, mission.destination, mission.cargoType,
+                        departure - now, arrival - now, cargo, false))
+                    return false;
+                if (supply) {
+                    auto trial = inventory.subset({{mission.origin, mission.cargoType}, {mission.destination, mission.cargoType}});
+                    trial.adjust(mission.origin, mission.destination, mission.cargoType,
+                        departure - now, arrival - now, cargo);
+                    const auto donorAfter = trial.project(mission.origin, mission.cargoType, supply->horizon);
+                    const auto recipient = trial.project(mission.destination, mission.cargoType, supply->horizon);
+                    const bool improvesRecipient = recipient.unserved < recipientBefore.unserved ||
+                        recipient.endingShortage < recipientBefore.endingShortage ||
+                        (recipientBefore.depletion &&
+                            (!recipient.depletion || *recipient.depletion > *recipientBefore.depletion));
+                    if (donorAfter.unserved > donorBefore.unserved ||
+                        donorAfter.endingShortage > donorBefore.endingShortage ||
+                        (donorAfter.depletion && (!donorBefore.depletion || *donorAfter.depletion < *donorBefore.depletion)) ||
+                        (recipient.depletion && now + *recipient.depletion <= mission.deadline) ||
+                        !improvesRecipient)
+                        return false;
+                }
+                return true;
+            };
             auto tryAt = [&](double departure) {
                 double arrival = 0;
-                if (departure < earliest || !MissionScheduler::feasible(mission, ship, departure, path.metrics, arrival) ||
-                    arrival > limit || !inventory.reserve(mission.origin, mission.destination, mission.cargoType,
-                        departure - now, arrival - now, mission.cargoAmount, false))
-                    return false;
+                double cargo = upper;
+                if (!feasibleAt(departure, cargo, arrival)) {
+                    if (!supply || upper <= std::max(supply->assignedCargo, smallest.cargoAmount))
+                        return false;
+                    cargo = std::max(supply->assignedCargo, smallest.cargoAmount);
+                    if (!feasibleAt(departure, cargo, arrival))
+                        return false;
+                    double infeasible = upper;
+                    while (infeasible - cargo > smallest.cargoAmount) {
+                        const double middle = std::midpoint(cargo, infeasible);
+                        if (feasibleAt(departure, middle, arrival))
+                            cargo = middle;
+                        else
+                            infeasible = middle;
+                    }
+                }
                 ScheduledMission candidate{mission.id, ship.id, departure, arrival, path.metrics.fuel,
                     path.path, path.routeIds, weights};
-                if (!best || rank(candidate) < rank(*best))
+                const double bestCargo = supply ? supply->assignedCargo : cargo;
+                if (!best || cargo > bestCargo || (cargo == bestCargo && rank(candidate) < rank(*best))) {
                     best = std::move(candidate);
-                return true;
+                    if (supply)
+                        supply->assignedCargo = cargo;
+                }
+                return cargo == upper;
             };
             if (previous && previous->spacecraftId == ship.id && previous->routeIds == path.routeIds &&
                 tryAt(previous->departureTime))
@@ -116,14 +182,26 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
             searched.push_back(std::move(original.routeIds));
         }
     }
-    for (const auto& strategy : std::array{weights, RouteWeights{0, 1, 0}, RouteWeights{0, 0, 1}}) {
-        auto path = Dijkstra::findShortestPath(graph, mission.origin, mission.destination, strategy, mission.cargoAmount);
-        nodesExplored += path.nodesExplored;
-        if (path.found && std::find(searched.begin(), searched.end(), path.routeIds) == searched.end()) {
-            consider(path);
-            searched.push_back(std::move(path.routeIds));
+    auto search = [&](double cargo) {
+        for (const auto& strategy : std::array{weights, RouteWeights{0, 1, 0}, RouteWeights{0, 0, 1}}) {
+            auto path = Dijkstra::findShortestPath(graph, mission.origin, mission.destination, strategy, cargo);
+            nodesExplored += path.nodesExplored;
+            if (path.found && std::find(searched.begin(), searched.end(), path.routeIds) == searched.end()) {
+                consider(path);
+                searched.push_back(std::move(path.routeIds));
+            }
         }
+    };
+    double searchCargo = mission.cargoAmount;
+    if (supply) {
+        double capacity = 0;
+        for (const auto& slot : slots)
+            capacity = std::max(capacity, slot.ship.maxCargoCapacity);
+        searchCargo = std::min(searchCargo, capacity);
     }
+    search(searchCargo);
+    if (supply && supply->assignedCargo < searchCargo && smallest.cargoAmount < searchCargo)
+        search(smallest.cargoAmount);
     return best;
 }
 }
