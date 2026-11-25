@@ -4,6 +4,7 @@
 
 int runSelfTests() {
     regression::testRoutingAndSimulation();
+    regression::testRouteUncertainty();
     regression::testAllocationAndForecast();
     regression::testInventoryAndCache();
     regression::testPlanImprovement();

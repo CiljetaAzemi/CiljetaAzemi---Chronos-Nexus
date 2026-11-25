@@ -77,7 +77,12 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
     const auto standard = InfrastructureOptimizer::optimize(projects, budget);
     consider(initial, standard);
     consider(initial, {});
-    const auto local = PlanImprover::improve(initial, obligations, ships, graph, inventory, weights, horizon);
+    if (std::any_of(obligations.begin(), obligations.end(), [](const Mission& mission) { return mission.importance > 0; })) {
+        const InventoryPlanningInput priorityInventory{inventory, aidNetwork, aid};
+        auto priorityPlan = MissionScheduler::schedule(obligations, ships, graph, weights, false, {}, &priorityInventory);
+        consider(priorityPlan, standard);
+    }
+    const auto local = PlanImprover::improve(initial, obligations, ships, graph, inventory, weights, horizon, true);
     consider(local, standard);
 
     std::map<std::pair<int, ResourceType>, const ResourceDemand*> balances;
@@ -164,7 +169,7 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
             }
         }
         const InventoryPlanningInput planning{inventory, aidNetwork, aid};
-        auto schedule = MissionScheduler::schedule(jobs, ships, graph, weights, preferEarliest, {}, &planning);
+        auto schedule = MissionScheduler::schedule(jobs, ships, graph, weights, preferEarliest, {}, &planning, true);
         for (const auto& entry : schedule.scheduled)
             if (const auto src = revised.find(entry.missionId); src != revised.end())
                 schedule.revisedOrigins.try_emplace(entry.missionId, src->second);

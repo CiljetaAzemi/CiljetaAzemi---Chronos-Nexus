@@ -44,7 +44,7 @@ CivilizationObjective::Weights CivilizationObjective::parseWeights(const std::st
 CivilizationObjective::CivilizationObjective(const std::vector<ResourceDemand>& inventory,
     const std::vector<Mission>& fixedInputs, const std::vector<Infrastructure>& projects,
     std::unordered_set<int> colonyIds, double horizon, double constructionBudget, Weights coefficients)
-    : obligations(fixedInputs), colonies(std::move(colonyIds)), weights(coefficients), budget(constructionBudget) {
+    : colonies(std::move(colonyIds)), weights(coefficients), budget(constructionBudget) {
     for (const auto& b : inventory) {
         endingRef += b.required;
         consumptionRef += horizon * b.consumption;
@@ -53,12 +53,17 @@ CivilizationObjective::CivilizationObjective(const std::vector<ResourceDemand>& 
             criticalConsumptionRef += horizon * b.consumption;
         }
     }
-    for (const auto& mission : obligations) {
-        cargoRef += mission.cargoAmount;
-        serviceRef += mission.cargoAmount * std::max(0, mission.priority);
-    }
+    obligations.reserve(fixedInputs.size());
+    for (const auto& mission : fixedInputs)
+        addExternalObligation(mission);
     for (const auto& project : projects)
         strategicRef += std::max(0.0, project.strategicValue);
+}
+
+void CivilizationObjective::addExternalObligation(const Mission& mission) {
+    obligations.push_back(mission);
+    cargoRef += mission.cargoAmount;
+    serviceRef += mission.cargoAmount * std::max(0, mission.priority);
 }
 
 CivilizationMetrics CivilizationObjective::evaluate(const SimulationResult& actual,

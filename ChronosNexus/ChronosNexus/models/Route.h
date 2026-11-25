@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 
 class Route {
 public:
@@ -24,5 +25,11 @@ public:
 
     // Route type
     bool isWormhole;
+
+    // Bounds at reference speed. Legacy routes have a fixed travel time.
+    std::optional<double> minimumTravelTime;
+    std::optional<double> maximumTravelTime;
+    double minimumTime() const { return minimumTravelTime.value_or(travelTime); }
+    double maximumTime() const { return maximumTravelTime.value_or(travelTime); }
 };
 

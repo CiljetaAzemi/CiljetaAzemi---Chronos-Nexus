@@ -24,5 +24,5 @@ struct SupplySearch {
 std::optional<ScheduledMission> findAssignment(const Mission& mission,
     const ScheduledMission* previous, const GalaxyGraph& graph, std::vector<ShipPlan>& ships,
     InventoryReservations& inventory, double now, long long& nodesExplored,
-    SupplySearch* supply = nullptr);
+    SupplySearch* supply = nullptr, bool reconsiderRisk = false);
 }

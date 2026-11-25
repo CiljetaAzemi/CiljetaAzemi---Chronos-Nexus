@@ -3,6 +3,19 @@
 
 namespace regression {
 void testCivilization() {
+    {
+        auto [graph, mission, other, expensive] = makeFlightFixture();
+        expensive.operatingCost = 10;
+        auto affordable = expensive;
+        affordable.id += 1;
+        affordable.operatingCost = 1;
+        const auto baseline = MissionScheduler::schedule({mission}, {expensive, affordable}, graph);
+        const auto improved = MissionScheduler::schedule({mission}, {expensive, affordable}, graph,
+            {}, false, {}, nullptr, true);
+        require(baseline.scheduled.at(0).spacecraftId == expensive.id &&
+            improved.scheduled.at(0).spacecraftId == affordable.id,
+            "Benefit-aware greedy assignment must account for operating cost before local repair.");
+    }
     GalaxyGraph graph;
     addTestRoute(graph, 1, 1, 3, 1, 1, 10);
     addTestRoute(graph, 2, 2, 3, 1, 1, 10);

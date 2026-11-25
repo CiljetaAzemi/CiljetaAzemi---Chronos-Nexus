@@ -51,7 +51,7 @@ void addStressClosures(const SchedulingResult& schedule, std::vector<Event>& eve
 int runBenchmark(int argc, char* argv[]) {
     if (argc < 4)
         throw std::invalid_argument(
-            "Usage: --benchmark SIZE SEED [MODE [--trace-plan] [--objective=PROFILE] [--scenario=CASE]]");
+            "Usage: --benchmark SIZE SEED [MODE [--trace-plan] [--objective=PROFILE] [--scenario=CASE] [--experimental-allocator]]");
     const std::string name = argv[2];
     const auto size = benchmark::dimensions(name);
     size_t consumed = 0;
@@ -67,11 +67,14 @@ int runBenchmark(int argc, char* argv[]) {
         mode != "stress" && mode != "stress-all-routes" && !inventoryMode)
         throw std::invalid_argument("Unknown benchmark mode.");
     bool trace = false, reportCivilization = civilization;
+    bool experimentalAllocator = false;
     std::string profile = "balanced", scenario = "standard";
     for (int i = 5; i < argc; ++i) {
         const std::string option = argv[i];
         if (option == "--trace-plan")
             trace = true;
+        else if (option == "--experimental-allocator")
+            experimentalAllocator = true;
         else if (option.starts_with("--objective=")) {
             profile = option.substr(12);
             reportCivilization = true;
@@ -135,7 +138,7 @@ int runBenchmark(int argc, char* argv[]) {
     measurements.report("allocation", 0, 0, true);
     const auto allocation = mode == "basic" ? ResourceAllocator::allocate(data.aidDemands) :
         ResourceAllocator::allocateWithRoutes(data.aidDemands, data.graph, weights,
-            [&](size_t count) { measurements.report("allocation", count, 0); });
+            [&](size_t count) { measurements.report("allocation", count, 0); }, experimentalAllocator);
     auto aid = LogisticsPlanner::createMissions(allocation, data.aidDemands,
         ResourceType::Food, 24.0, size.missions);
     if (!aid.empty())
@@ -149,7 +152,7 @@ int runBenchmark(int argc, char* argv[]) {
     const InventoryPlanningInput planning{data.inventory, data.aidDemands, aid, mode != "inventory-uncached"};
     auto schedule = MissionScheduler::schedule(data.missions, data.ships, data.graph,
         weights, mode == "earliest", [&](size_t count) { measurements.report("scheduling", 0, count); },
-        inventoryMode ? &planning : nullptr);
+        inventoryMode ? &planning : nullptr, civilization);
     if (improve) {
         measurements.report("local-search", 0, 0, true);
         schedule = PlanImprover::improve(std::move(schedule), data.missions, data.ships,
@@ -194,14 +197,18 @@ int runBenchmark(int argc, char* argv[]) {
     if (mode == "stress" || mode == "stress-all-routes")
         addStressClosures(schedule, data.events);
     measurements.report("simulation", 0, 0, true);
+    const SimulationObjective scoring{objective, construction};
     const auto actual = SimulationEngine::run(data.graph, data.inventory, data.missions, data.ships,
         schedule, data.events, [&](size_t count) { measurements.report("simulation", 0, count); },
-        mode == "all-routes" || mode == "stress-all-routes", 30);
+        mode == "all-routes" || mode == "stress-all-routes", 30, nullptr, &scoring);
     measurements.report("complete", 0, actual.completed + actual.failed, true);
     benchmark::reportResults(data.missions, size.missions, aid.size(), allocation, schedule, construction,
         actual, infrastructureSeconds, measurements, inventoryMode, improve, trace);
     if (reportCivilization) {
-        const auto m = objective.evaluate(actual, construction);
+        auto realizedObjective = objective;
+        for (const auto& request : actual.activatedUrgentMissions)
+            realizedObjective.addExternalObligation(request);
+        const auto m = realizedObjective.evaluate(actual, construction);
         std::cout << std::setprecision(12) << "CIVILIZATION,"
             << (profile.find(',') == std::string::npos ? profile : "custom-weights") << ',' << scenario << ','
             << m.score << ',' << m.security << ',' << m.criticalSecurity << ',' << m.service << ','

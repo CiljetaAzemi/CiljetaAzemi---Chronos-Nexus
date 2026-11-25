@@ -73,6 +73,7 @@ public:
         double stock = 0;
         double endingShortage = 0;
         double unserved = 0;
+        double waste = 0;
         std::optional<double> depletion;
     };
 
@@ -94,6 +95,7 @@ public:
             if (!result.depletion && rate < 0 && (raw < 0 || (final && raw == 0)))
                 result.depletion = last + result.stock / -rate;
             result.unserved += std::max(0.0, -raw);
+            result.waste += std::max(0.0, raw - account->capacity);
             result.stock = std::clamp(raw, 0.0, account->capacity);
             last = time;
         };
@@ -101,6 +103,7 @@ public:
             if (time > horizon)
                 break;
             advanceTo(time, false);
+            result.waste += std::max(0.0, result.stock + change.in - account->capacity);
             const double after = std::min(account->capacity, result.stock + change.in) - change.out;
             if (after < 0 && !result.depletion)
                 result.depletion = time;

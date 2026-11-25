@@ -47,6 +47,7 @@ public:
         std::vector<ResourceDemand> planets,
         const GalaxyGraph& galaxy,
         const RouteWeights& weights = {},
-        const std::function<void(size_t)>& progress = {}
+        const std::function<void(size_t)>& progress = {},
+        bool benefitAware = false
     );
 };

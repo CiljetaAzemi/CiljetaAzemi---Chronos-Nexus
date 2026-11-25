@@ -93,20 +93,13 @@ std::vector<PathResult> constrainedRoutes(const GalaxyGraph& graph, const Missio
                 break;
             ++arcs;
             ++stats.searchArcs;
-            if (!edge.isAvailable || !(edge.maxCapacity >= mission.cargoAmount) ||
-                !(edge.distance >= 0) || !(edge.fuelConsumption >= 0) || !(edge.travelTime >= 0) ||
-                !(edge.risk >= 0 && edge.risk <= 1) || !(edge.reliability >= 0 && edge.reliability <= 1)) {
+            if (!Dijkstra::usable(edge, mission.cargoAmount)) {
                 ++stats.prunedArcs;
                 continue;
             }
             Label next{edge.to, current.metrics, current.cost, index, edge.id};
-            next.metrics.distance += edge.distance;
-            next.metrics.fuel += edge.fuelConsumption;
-            next.metrics.time += edge.travelTime;
-            next.metrics.risk += edge.risk;
-            next.cost += weights.distance * edge.distance + weights.fuel * edge.fuelConsumption +
-                weights.time * edge.travelTime + weights.risk * edge.risk +
-                weights.reliability * (1 - edge.reliability);
+            next.metrics.add(edge);
+            next.cost += Dijkstra::edgeCost(edge, weights);
             if (!std::isfinite(next.cost) || !std::isfinite(next.metrics.distance) ||
                 next.metrics.fuel > ship.currentFuel || next.metrics.time > timeLimit) {
                 ++stats.prunedArcs;
@@ -145,7 +138,8 @@ double value(const Mission& mission, const Spacecraft& ship, const RouteMetrics&
 
 SchedulingResult PlanImprover::improve(SchedulingResult plan, const std::vector<Mission>& missions,
     const std::vector<Spacecraft>& ships, const GalaxyGraph& graph,
-    const std::vector<ResourceDemand>& inventory, const RouteWeights& weights, double horizon) {
+    const std::vector<ResourceDemand>& inventory, const RouteWeights& weights, double horizon, bool benefitAware) {
+    const auto legValue = benefitAware ? MissionScheduler::bookingValue : value;
     for (double weight : {weights.distance, weights.fuel, weights.time, weights.risk, weights.reliability})
         if (!std::isfinite(weight) || weight < 0)
             return plan;
@@ -185,7 +179,7 @@ SchedulingResult PlanImprover::improve(SchedulingResult plan, const std::vector<
 
     std::set<int> originalRejected(plan.rejectedMissionIds.begin(), plan.rejectedMissionIds.end());
     std::set<int> pending = originalRejected;
-    std::map<int, std::vector<int>> incoming;
+    std::map<int, std::vector<int>> incoming, outgoing;
     std::vector<int> targets(pending.begin(), pending.end());
     std::erase_if(targets, [&](int id) {
         const auto& m = jobs.at(id);
@@ -196,12 +190,17 @@ SchedulingResult PlanImprover::improve(SchedulingResult plan, const std::vector<
     std::sort(targets.begin(), targets.end(), [&](int a, int b) {
         const auto& x = jobs.at(a);
         const auto& y = jobs.at(b);
+        if (benefitAware && MissionScheduler::serviceValue(x) != MissionScheduler::serviceValue(y))
+            return MissionScheduler::serviceValue(x) > MissionScheduler::serviceValue(y);
         if (x.priority != y.priority)
             return x.priority > y.priority;
         return std::tie(x.deadline, x.id) < std::tie(y.deadline, y.id);
     });
-    for (int id : targets)
+    for (int id : targets) {
         incoming[jobs.at(id).destination].push_back(id);
+        if (benefitAware)
+            outgoing[jobs.at(id).origin].push_back(id);
+    }
     if (targets.size() > targetLimit)
         targets.resize(targetLimit);
 
@@ -265,7 +264,7 @@ SchedulingResult PlanImprover::improve(SchedulingResult plan, const std::vector<
                 mission.cargoAmount, metric) || !candidate.adjust(mission.origin, mission.destination,
                 mission.cargoType, leg.departureTime, leg.arrivalTime, -mission.cargoAmount))
                 return false;
-            delta -= value(mission, ships[shipIndex.at(leg.spacecraftId)], metric);
+            delta -= legValue(mission, ships[shipIndex.at(leg.spacecraftId)], metric);
         }
 
         std::vector<ScheduledMission> newLegs;
@@ -286,12 +285,13 @@ SchedulingResult PlanImprover::improve(SchedulingResult plan, const std::vector<
                             departure, arrival, mission.cargoAmount, true))
                         continue;
                     newLegs.push_back({mission.id, state.id, departure, arrival, route.metrics.fuel,
-                        std::move(route.path), std::move(route.routeIds), weights});
+                        std::move(route.path), std::move(route.routeIds), weights,
+                        FlightEstimate::from(route.metrics, departure, state.speed)});
                     fuelBefore.push_back(state.currentFuel);
                     state.currentLocation = mission.destination;
                     state.availableAt = arrival;
                     state.currentFuel -= route.metrics.fuel;
-                    delta += value(mission, state, route.metrics);
+                    delta += legValue(mission, state, route.metrics);
                     fitted = true;
                     break;
                 }
@@ -382,6 +382,17 @@ SchedulingResult PlanImprover::improve(SchedulingResult plan, const std::vector<
 
         for (size_t i : atOrigin(job.origin, true)) {
             const int incumbent = tracks[i].missions.back();
+            if (const auto next = outgoing.find(job.destination); next != outgoing.end()) {
+                for (int successor : next->second) {
+                    if (plan.searchTrials >= activeLimit)
+                        break;
+                    if (successor != id && pending.contains(successor) &&
+                        (accepted = trial({i}, {{i, id}, {i, successor}})))
+                        break;
+                }
+            }
+            if (accepted)
+                break;
             // A compatible return leg can place a two-leg chain before the incumbent.
             if (const auto returns = incoming.find(job.origin); returns != incoming.end()) {
                 size_t inspected = 0;

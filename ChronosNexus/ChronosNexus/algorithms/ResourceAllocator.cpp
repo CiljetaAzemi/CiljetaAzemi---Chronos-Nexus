@@ -1,5 +1,7 @@
 #include <unordered_map>
 #include "ResourceAllocator.h"
+#include <cmath>
+#include <numeric>
 #include <limits>
 
 #include <algorithm>
@@ -70,7 +72,7 @@ AllocationResult ResourceAllocator::allocate(
 
 AllocationResult ResourceAllocator::allocateWithRoutes(
     std::vector<ResourceDemand> planets, const GalaxyGraph& galaxy,
-    const RouteWeights& weights, const std::function<void(size_t)>& progress) {
+    const RouteWeights& weights, const std::function<void(size_t)>& progress, bool benefitAware) {
     AllocationResult result;
     std::sort(planets.begin(), planets.end(), [](const ResourceDemand& a, const ResourceDemand& b) {
         return a.priority != b.priority ? a.priority > b.priority : a.planetId < b.planetId;
@@ -83,18 +85,55 @@ AllocationResult ResourceAllocator::allocateWithRoutes(
         if (planets[i].available > planets[i].required)
             donors[planets[i].type].emplace(planets[i].planetId, i);
 
+    auto nearest = [&](const ResourceDemand& receiver) {
+        const auto& suppliers = donors.at(receiver.type);
+        ++result.candidates;
+        auto path = Dijkstra::findNearest(reverse, receiver.planetId,
+            [&](int id) { return id != receiver.planetId && suppliers.contains(id); }, weights);
+        result.nodesExplored += path.nodesExplored;
+        return path;
+    };
+    std::vector<size_t> order(planets.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::vector<PathResult> firstPaths;
+    if (benefitAware) {
+        firstPaths.resize(planets.size());
+        std::vector<double> benefit(planets.size());
+        for (size_t i : order) {
+            const auto& receiver = planets[i];
+            const double shortage = receiver.required - receiver.available;
+            if (shortage <= 0 || !donors.contains(receiver.type) || donors.at(receiver.type).empty())
+                continue;
+            auto& path = firstPaths[i];
+            path = nearest(receiver);
+            if (!path.found)
+                continue;
+            const auto& source = planets[donors.at(receiver.type).at(path.path.back())];
+            const double amount = std::min(shortage, source.available - source.required);
+            const double essential = receiver.type == ResourceType::Food || receiver.type == ResourceType::Medicine ? 2 : 1;
+            const double urgency = std::max(0.0, receiver.consumption - receiver.production) /
+                (1 + receiver.available);
+            benefit[i] = essential * (1 + std::log1p(std::max(0, receiver.priority)) + urgency) *
+                amount / (1 + path.totalCost);
+        }
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return benefit[a] > benefit[b]; });
+    }
     size_t processed = 0;
-    for (auto& receiver : planets) {
+    for (auto index : order) {
+        auto& receiver = planets[index];
         if (progress)
             progress(processed);
         ++processed;
         auto& suppliers = donors[receiver.type];
         double shortage = receiver.required - receiver.available;
         while (shortage > 0 && !suppliers.empty()) {
-            ++result.candidates;
-            auto path = Dijkstra::findNearest(reverse, receiver.planetId,
-                [&](int id) { return id != receiver.planetId && suppliers.contains(id); }, weights);
-            result.nodesExplored += path.nodesExplored;
+            PathResult path;
+            if (benefitAware && firstPaths[index].found && suppliers.contains(firstPaths[index].path.back())) {
+                path = std::move(firstPaths[index]);
+                firstPaths[index].found = false;
+            } else {
+                path = nearest(receiver);
+            }
             if (!path.found)
                 break;
             const int supplierId = path.path.back();

@@ -10,14 +10,32 @@ namespace {
 bool nonnegative(double value) {
     return std::isfinite(value) && value >= 0;
 }
+}
 
-bool usable(const Route& edge, double cargo) {
+bool Dijkstra::usable(const Route& edge, double cargo) {
     return edge.isAvailable && nonnegative(edge.distance) &&
         nonnegative(edge.fuelConsumption) && nonnegative(edge.travelTime) &&
+        nonnegative(edge.minimumTime()) && nonnegative(edge.maximumTime()) &&
+        edge.minimumTime() <= edge.travelTime && edge.travelTime <= edge.maximumTime() &&
         nonnegative(edge.risk) && edge.risk <= 1 &&
-        nonnegative(edge.reliability) && edge.reliability <= 1 &&
+        edge.reliability > 0 && edge.reliability <= 1 &&
         nonnegative(edge.maxCapacity) && cargo <= edge.maxCapacity;
 }
+
+double Dijkstra::edgeCost(const Route& edge, const RouteWeights& weights) {
+    return weights.distance * edge.distance + weights.fuel * edge.fuelConsumption +
+        weights.time * edge.maximumTime() + weights.risk * edge.risk +
+        weights.reliability * (1 - edge.reliability);
+}
+
+void RouteMetrics::add(const Route& edge) {
+    distance += edge.distance;
+    fuel += edge.fuelConsumption;
+    time += edge.maximumTime();
+    risk += edge.risk;
+    minimumTime += edge.minimumTime();
+    expectedTime += edge.travelTime;
+    reliability *= edge.reliability;
 }
 
 PathResult Dijkstra::findShortestPath(const GalaxyGraph& graph, int start,
@@ -58,9 +76,7 @@ PathResult Dijkstra::findNearest(const GalaxyGraph& graph, int start,
         for (const Route& edge : graph.getRoutes(node)) {
             if (!usable(edge, cargo))
                 continue;
-            const double next = cost + weights.distance * edge.distance +
-                weights.fuel * edge.fuelConsumption + weights.time * edge.travelTime +
-                weights.risk * edge.risk + weights.reliability * (1 - edge.reliability);
+            const double next = cost + edgeCost(edge, weights);
             auto previous = distance.find(edge.to);
             if (std::isfinite(next) && (previous == distance.end() || next < previous->second)) {
                 distance[edge.to] = next;
@@ -94,10 +110,7 @@ bool Dijkstra::measure(const GalaxyGraph& graph, const std::vector<int>& routeId
         if (!edge || edge->from != current || !usable(*edge, cargo))
             return false;
         current = edge->to;
-        metrics.distance += edge->distance;
-        metrics.fuel += edge->fuelConsumption;
-        metrics.time += edge->travelTime;
-        metrics.risk += edge->risk;
+        metrics.add(*edge);
     }
     return current == destination && nonnegative(metrics.distance) &&
         nonnegative(metrics.fuel) && nonnegative(metrics.time) && nonnegative(metrics.risk);

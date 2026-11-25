@@ -7,6 +7,7 @@ struct Input {
     benchmark::Scenario data;
     int budget = 0;
     double horizon = 30;
+    bool experimentalAllocator = false;
     std::vector<Event> knownProductionChanges;
 };
 Input loadJson(std::istream& source);

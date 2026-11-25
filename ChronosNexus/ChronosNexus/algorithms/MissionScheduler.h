@@ -8,6 +8,19 @@
 #include "Dijkstra.h"
 #include "ResourceAllocator.h"
 
+struct FlightEstimate {
+    double earliestArrival = 0;
+    double expectedArrival = 0;
+    double latestArrival = 0;
+    double routeReliability = 1;
+    double risk = 0;
+
+    static FlightEstimate from(const RouteMetrics& route, double departure, double speed) {
+        return {departure + route.minimumTime / speed, departure + route.expectedTime / speed,
+            departure + route.time / speed, route.reliability, route.risk};
+    }
+};
+
 struct ScheduledMission {
     int missionId;
     int spacecraftId;
@@ -17,6 +30,7 @@ struct ScheduledMission {
     std::vector<int> path;
     std::vector<int> routeIds;
     RouteWeights weights;
+    FlightEstimate estimate;
 };
 
 struct SchedulingResult {
@@ -55,10 +69,13 @@ public:
         const RouteWeights& weights = {},
         bool earliestArrival = false,
         const std::function<void(size_t)>& progress = {},
-        const InventoryPlanningInput* inventory = nullptr
+        const InventoryPlanningInput* inventory = nullptr,
+        bool benefitAware = false
     );
     static bool feasible(const Mission& mission, const Spacecraft& ship,
         double departure, const RouteMetrics& route, double& arrival);
+    static double serviceValue(const Mission& mission);
+    static double bookingValue(const Mission& mission, const Spacecraft& ship, const RouteMetrics& route);
 };
 
 

@@ -4,6 +4,7 @@
 
 #include <sstream>
 #include <string>
+#include <cmath>
 
 namespace regression {
 namespace {
@@ -73,6 +74,20 @@ void testScenarioJson() {
         urgentResult.at("simulation").at("missions").at(0).at("kind") == "urgent" &&
         urgentResult.at("simulation").at("completed") == 1,
         "Urgent JSON missions must become visible only at their event time.");
+    auto later = mission;
+    later["id"] = 3;
+    later["priority"] = 12;
+    urgent["events"].push_back({{"id", 9}, {"time", 1.5}, {"type", "urgent_mission"}, {"mission", later}});
+    std::ostringstream competingOutput;
+    scenario::writeResult(parse(urgent.dump()), competingOutput);
+    const auto competing = Json::parse(competingOutput.str());
+    const auto& competingActual = competing.at("simulation");
+    require(competing.at("planned").at("forecast") == urgentResult.at("planned").at("forecast") &&
+        competingActual.at("completed") == 1 && competingActual.at("failed") == 1 &&
+        competingActual.at("service_obligations") == 2 &&
+        std::abs(competingActual.at("civilization").at("service").get<double>() - 0.25) < 1e-12,
+        "An unserved external request must count in the denominator without entering the earlier plan.");
+    urgent["events"].erase(1);
     urgent["missions"].push_back(mission);
     requireInvalid(urgent.dump(), "events[0]: duplicate id");
 

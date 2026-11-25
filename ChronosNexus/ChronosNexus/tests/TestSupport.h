@@ -21,6 +21,7 @@ void addTestRoute(GalaxyGraph& graph, int id, int from, int to, double time, dou
 void requireSamePlan(const SchedulingResult& a, const SchedulingResult& b);
 
 void testRoutingAndSimulation();
+void testRouteUncertainty();
 void testAllocationAndForecast();
 void testInventoryAndCache();
 void testPlanImprovement();

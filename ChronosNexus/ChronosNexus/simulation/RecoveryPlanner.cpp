@@ -61,18 +61,25 @@ std::vector<Slot> availableSlots(const Mission& mission,
 std::optional<ScheduledMission> findAssignment(const Mission& mission,
     const ScheduledMission* previous, const GalaxyGraph& graph, std::vector<ShipPlan>& ships,
     InventoryReservations& inventory, double now, long long& nodesExplored,
-    SupplySearch* supply) {
+    SupplySearch* supply, bool reconsiderRisk) {
     auto smallest = mission;
     if (supply)
         smallest.cargoAmount = supply->minimumCargo;
     const auto slots = availableSlots(smallest, graph, ships, now);
     if (slots.empty())
         return std::nullopt;
-    const RouteWeights weights = previous ? previous->weights : RouteWeights{0.02, 0.03, 0.5, 3.0, 2.0};
+    const RouteWeights standard{0.02, 0.03, 0.5, 3.0, 2.0};
+    auto weights = previous ? previous->weights : standard;
+    if (reconsiderRisk && weights.risk == 0)
+        weights.risk = standard.risk;
     auto rank = [&](const ScheduledMission& row) {
         const bool unchanged = previous && row.spacecraftId == previous->spacecraftId &&
             row.departureTime == previous->departureTime && row.routeIds == previous->routeIds;
-        return std::tuple{!unchanged, previous && row.spacecraftId != previous->spacecraftId,
+        double routeCost = 0;
+        if (reconsiderRisk)
+            for (int edge : row.routeIds)
+                routeCost += Dijkstra::edgeCost(*graph.findRoute(edge), weights);
+        return std::tuple{routeCost, !unchanged, previous && row.spacecraftId != previous->spacecraftId,
             row.arrivalTime, row.fuelUsed, row.spacecraftId};
     };
     std::optional<ScheduledMission> best;
@@ -151,7 +158,7 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
                     }
                 }
                 ScheduledMission candidate{mission.id, ship.id, departure, arrival, path.metrics.fuel,
-                    path.path, path.routeIds, weights};
+                    path.path, path.routeIds, weights, FlightEstimate::from(path.metrics, departure, ship.speed)};
                 const double bestCargo = supply ? supply->assignedCargo : cargo;
                 if (!best || cargo > bestCargo || (cargo == bestCargo && rank(candidate) < rank(*best))) {
                     best = std::move(candidate);
@@ -177,7 +184,8 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
         if (Dijkstra::measure(graph, original.routeIds, mission.origin, mission.destination,
             mission.cargoAmount, original.metrics)) {
             consider(original);
-            if (best && !std::get<0>(rank(*best)))
+            if (best && !reconsiderRisk && best->spacecraftId == previous->spacecraftId &&
+                best->departureTime == previous->departureTime && best->routeIds == previous->routeIds)
                 return best;
             searched.push_back(std::move(original.routeIds));
         }

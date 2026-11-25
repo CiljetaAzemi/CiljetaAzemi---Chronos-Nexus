@@ -15,8 +15,13 @@ struct RouteWeights {
 struct RouteMetrics {
     double distance = 0;
     double fuel = 0;
-    double time = 0;
+    double time = 0; // Sum of upper bounds, used for deadlines and reservations.
     double risk = 0;
+    double minimumTime = 0;
+    double expectedTime = 0;
+    double reliability = 1;
+
+    void add(const Route& edge);
 };
 
 struct PathResult {
@@ -30,6 +35,8 @@ struct PathResult {
 
 class Dijkstra {
 public:
+    static bool usable(const Route& edge, double cargo);
+    static double edgeCost(const Route& edge, const RouteWeights& weights);
     static PathResult findShortestPath(
         const GalaxyGraph& graph,
         int start,

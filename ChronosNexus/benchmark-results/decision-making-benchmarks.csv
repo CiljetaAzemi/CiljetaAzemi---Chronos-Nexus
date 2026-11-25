@@ -1,0 +1,5 @@
+"version","size","seed","mode","objective_profile","objective_value","completed","failed","rejected","transportation_cost","fuel","ending_shortage","stockout_amount","waste","risk","engine_seconds","wall_seconds","peak_working_set_bytes","graph_nodes_explored","plans_evaluated"
+"before","small","20261118","phase3","balanced","54.1646359878","24","2","29","1553.09","1505.48","197.4","42.472","32","5.62","0.0239964","0.277","6623232","4199","5"
+"before","medium","20261118","phase3","balanced","55.1685589825","243","2","305","10181.8","10323.2","1991","309.4","87","45.98","0.419421","0.798","13643776","202492","5"
+"after","small","20261118","phase3","balanced","53.5166964117","25","2","28","1660.87","1665.04","229.272","13.6","72","6.21","0.0281587","0.231","6733824","13644","6"
+"after","medium","20261118","phase3","balanced","55.1485939466","242","1","307","9978.47","10138.8","2010","311.4","34","45.51","0.436431","0.700","14061568","221428","6"

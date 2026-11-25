@@ -1,5 +1,6 @@
 #include "SimulationEngine.h"
 #include "RecoveryPlanner.h"
+#include "../algorithms/CivilizationObjective.h"
 
 #include <algorithm>
 #include <chrono>
@@ -57,7 +58,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
     const std::vector<ResourceDemand>& planets, const std::vector<Mission>& missions,
     const std::vector<Spacecraft>& spacecraft, const SchedulingResult& schedule,
     const std::vector<Event>& events, const std::function<void(size_t)>& progress,
-    bool recheckAllDepartures, double minimumHorizon, const std::vector<Event>* knownSupplyEvents) {
+    bool recheckAllDepartures, double minimumHorizon, const std::vector<Event>* knownSupplyEvents, const SimulationObjective* scoring) {
     SimulationResult result;
     result.scheduled = static_cast<int>(schedule.scheduled.size());
     GalaxyGraph active = galaxy;
@@ -83,7 +84,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             throw std::invalid_argument("Duplicate spacecraft ID.");
 
     std::unordered_set<int> disabled;
-    struct Flight { size_t entry; double arrival; };
+    struct Flight { size_t entry; double arrival; FlightEstimate estimate; };
     std::unordered_map<int, Flight> inFlight;
     auto entries = schedule.scheduled;
     std::set<size_t> pending;
@@ -172,7 +173,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
     };
     auto findReplacement = [&](const Mission& mission, const ScheduledMission* previous,
         const std::set<size_t>& held = {}, recovery::SupplySearch* supply = nullptr,
-        const InventoryReservations* forecastInventory = nullptr) {
+        const InventoryReservations* forecastInventory = nullptr, bool reconsiderRisk = false) {
         const std::set<Key> keys{{mission.origin, mission.cargoType}, {mission.destination, mission.cargoType}};
         for (const auto& [location, type] : keys) {
             const auto row = balances.find(location);
@@ -199,7 +200,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                 plans[ship->second].pending.push_back({missionById.at(entry.missionId), &entry});
         }
         return recovery::findAssignment(mission, previous, active, plans, inventory, now,
-            result.nodesExplored, supply);
+            result.nodesExplored, supply, reconsiderRisk);
     };
 
 
@@ -228,7 +229,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
     std::deque<Mission> preventiveMissions;
     std::unordered_set<int> urgentIds;
     long long nextPreventiveId = 0;
-    if (knownSupplyEvents) {
+    if (knownSupplyEvents || scoring) {
         for (const auto& [location, row] : balances)
             for (const auto& [type, stock] : row)
                 accounts.emplace(location, type);
@@ -417,6 +418,125 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         }
     };
 
+    auto displaceForUrgent = [&](const Event& event, const Mission& urgent) -> std::optional<ScheduledMission> {
+
+        if (!scoring || now > minimumHorizon)
+            return std::nullopt;
+        auto objective = scoring->initial;
+        for (const auto& job : result.activatedUrgentMissions)
+            objective.addExternalObligation(job);
+        const double remaining = minimumHorizon - now;
+        auto addProjection = [&](SimulationResult& projection, const InventoryReservations& ledger,
+            const std::set<Key>& keys, double sign) {
+            for (const auto& [location, type] : keys) {
+                const auto value = ledger.project(location, type, remaining);
+                projection.remainingShortage += sign * value.endingShortage;
+                projection.stockoutAmount += sign * value.unserved;
+                projection.waste += sign * value.waste;
+                auto& row = projection.resourceOutcomes[location][type];
+                row.endingShortage += sign * value.endingShortage;
+                row.unserved += sign * value.unserved;
+            }
+        };
+        auto addLeg = [&](SimulationResult& projection, const Mission& job, const ScheduledMission& leg, double sign) {
+            RouteMetrics metrics;
+            if (!Dijkstra::measure(active, leg.routeIds, job.origin, job.destination, job.cargoAmount, metrics))
+                return false;
+            projection.transportationCost += sign * metrics.distance * ships.at(leg.spacecraftId).operatingCost;
+            projection.fuel += sign * metrics.fuel;
+            projection.risk += sign * metrics.risk;
+            if (sign > 0)
+                projection.deliveries.emplace(job.id, SimulationResult::Delivery{job.cargoAmount, leg.arrivalTime, leg.estimate});
+            else
+                projection.deliveries.erase(job.id);
+            return true;
+        };
+        std::optional<SimulationResult> common;
+        auto buildCommon = [&]() -> bool {
+            auto ledger = inventoryFor(accounts);
+            if (!ledger.feasible())
+                return false;
+            common.emplace();
+            auto& forecast = *common;
+            forecast.deliveries = result.deliveries;
+            forecast.transportationCost = result.transportationCost;
+            forecast.fuel = result.fuel;
+            forecast.risk = result.risk;
+            forecast.waste = result.waste;
+            forecast.stockoutAmount = result.stockoutAmount;
+            for (const auto& [location, type] : accounts) {
+                const auto& stock = balances.at(location).at(type);
+                const double raw = stock.stock + (stock.production - stock.consumption) * (now - stock.updatedAt);
+                const double unserved = std::max(0.0, -raw);
+                forecast.resourceOutcomes[location][type] = {0, stock.unserved + unserved};
+                forecast.stockoutAmount += unserved;
+                forecast.waste += std::max(0.0, raw - stock.storage);
+            }
+            addProjection(forecast, ledger, accounts, 1);
+            for (const auto index : pending) {
+                const auto& leg = entries[index];
+                if (!addLeg(forecast, *missionById.at(leg.missionId), leg, 1))
+                    return false;
+            }
+            for (const auto& [shipId, flight] : inFlight) {
+                const auto& job = *missionById.at(entries[flight.entry].missionId);
+                if (disabled.contains(shipId))
+                    forecast.waste += job.cargoAmount;
+                else
+                    forecast.deliveries.emplace(job.id, SimulationResult::Delivery{job.cargoAmount, flight.arrival, flight.estimate});
+            }
+            return true;
+        };
+        // Only terminal pending legs can be removed without changing other ship bookings.
+        std::map<int, size_t> terminal;
+        for (auto index : pending) {
+            const auto& row = entries[index];
+            auto [slot, added] = terminal.emplace(row.spacecraftId, index);
+            if (!added && entries[slot->second].departureTime <= row.departureTime)
+                slot->second = index;
+        }
+        for (const auto& [shipId, index] : terminal) {
+            const auto previous = entries[index];
+            const auto& incumbent = *missionById.at(previous.missionId);
+            if (incumbent.origin != urgent.origin)
+                continue;
+            const std::set<Key> keys{{urgent.origin, urgent.cargoType}, {urgent.destination, urgent.cargoType},
+                {incumbent.origin, incumbent.cargoType}, {incumbent.destination, incumbent.cargoType}};
+            const bool accountsExist = std::all_of(keys.begin(), keys.end(), [&](const auto& key) {
+                return balances.contains(key.first) && balances.at(key.first).contains(key.second);
+            });
+            if (!accountsExist)
+                continue;
+            const auto before = inventoryFor(keys);
+            pending.erase(index);
+            auto replacement = findReplacement(urgent, nullptr);
+            auto after = inventoryFor(keys);
+            if (replacement && replacement->spacecraftId == shipId &&
+                after.adjust(urgent.origin, urgent.destination, urgent.cargoType,
+
+                    replacement->departureTime - now, replacement->arrivalTime - now, urgent.cargoAmount) &&
+                after.feasible()) {
+                if (!common) {
+                    pending.insert(index);
+                    if (!buildCommon())
+                        return std::nullopt;
+                    pending.erase(index);
+                }
+                auto candidate = *common;
+                addProjection(candidate, before, keys, -1);
+                addProjection(candidate, after, keys, 1);
+                if (addLeg(candidate, incumbent, previous, -1) && addLeg(candidate, urgent, *replacement, 1) &&
+                    objective.evaluate(candidate, scoring->construction).score >
+                        objective.evaluate(*common, scoring->construction).score + 1e-9) {
+                    applyRepair(event, Decision::Reason::DisplacedBooking, incumbent, previous, {});
+                    return replacement;
+                }
+            }
+            pending.insert(index);
+        }
+        return std::nullopt;
+    };
+
     if (knownSupplyEvents)
         predictAndPrevent(accounts, Event{});
     beforeFirstEvent = false;
@@ -448,9 +568,41 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                     applied = active.blockRoute(id);
                 }
                 break;
-            case EventType::RouteRiskIncrease:
+            case EventType::RouteRiskIncrease: {
+                const auto* edge = active.findRoute(id);
+                const double oldRisk = edge ? edge->risk : 0;
                 applied = active.updateRouteRisk(id, event.severity);
+                if (!applied || event.severity <= oldRisk)
+                    break;
+                const auto started = std::chrono::steady_clock::now();
+                std::vector<size_t> affected;
+                for (const auto index : pending) {
+                    const auto& ids = entries[index].routeIds;
+                    if (std::find(ids.begin(), ids.end(), id) != ids.end())
+                        affected.push_back(index);
+                }
+                for (const auto index : affected) {
+                    const auto previous = entries[index];
+                    const auto& mission = *missionById.at(previous.missionId);
+                    pending.erase(index);
+                    auto replacement = findReplacement(mission, &previous, {}, nullptr, nullptr, true);
+                    if (replacement && replacement->routeIds != previous.routeIds) {
+                        auto cost = [&](const ScheduledMission& row) {
+                            double total = 0;
+                            for (int edgeId : row.routeIds)
+                                total += Dijkstra::edgeCost(*active.findRoute(edgeId), replacement->weights);
+                            return total;
+                        };
+                        if (cost(*replacement) < cost(previous)) {
+                            applyRepair(event, Decision::Reason::IncreasedRouteRisk, mission, previous, std::move(replacement));
+                            continue;
+                        }
+                    }
+                    pending.insert(index);
+                }
+                result.replanSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
                 break;
+            }
             case EventType::SpacecraftDestroyed:
             case EventType::SpacecraftMechanicalFailure:
                 applied = ships.contains(id) && disabled.insert(id).second;
@@ -461,9 +613,13 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             case EventType::HighPriorityMission:
                 if (event.urgentMission && missionById.emplace(event.urgentMission->id, &*event.urgentMission).second) {
                     const auto& mission = *event.urgentMission;
+                    if (now <= minimumHorizon)
+                        result.activatedUrgentMissions.push_back(mission);
                     result.missionStatuses.emplace(mission.id, MissionStatus::Pending);
                     const auto start = std::chrono::steady_clock::now();
                     auto replacement = findReplacement(mission, nullptr);
+                    if (!replacement)
+                        replacement = displaceForUrgent(event, mission);
                     applyRepair(event, Decision::Reason::UrgentMission, mission, std::nullopt, std::move(replacement));
                     result.replanSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
                     applied = true;
@@ -513,6 +669,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         if (action.type == ActionType::Arrival) {
             if (status != MissionStatus::InProgress)
                 continue;
+            const auto estimate = inFlight.at(entry.spacecraftId).estimate;
             inFlight.erase(entry.spacecraftId);
             if (disabled.contains(entry.spacecraftId)) {
                 result.waste += mission.cargoAmount;
@@ -527,7 +684,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             const double accepted = std::min(mission.cargoAmount, destination.storage - destination.stock);
             destination.stock += accepted;
             result.deliveredAmount += accepted;
-            result.deliveries.emplace(mission.id, SimulationResult::Delivery{accepted, now});
+            result.deliveries.emplace(mission.id, SimulationResult::Delivery{accepted, now, estimate});
             result.waste += mission.cargoAmount - accepted;
             status = MissionStatus::Completed;
             ++result.completed;
@@ -599,7 +756,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         ship.currentFuel -= metrics.fuel;
         ship.availableAt = arrival;
         pending.erase(action.index);
-        inFlight.emplace(ship.id, Flight{action.index, arrival});
+        inFlight.emplace(ship.id, Flight{action.index, arrival, FlightEstimate::from(metrics, now, ship.speed)});
         status = MissionStatus::InProgress;
         // Account for the full route at departure. Closures affect future departures only.
         result.distance += metrics.distance;

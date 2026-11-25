@@ -42,10 +42,19 @@ bool MissionScheduler::feasible(const Mission& mission, const Spacecraft& ship,
     return std::isfinite(arrival) && arrival <= mission.deadline;
 }
 
+double MissionScheduler::serviceValue(const Mission& mission) {
+    return mission.cargoAmount * (std::max(0, mission.priority) + std::max(0.0, mission.importance));
+}
+
+double MissionScheduler::bookingValue(const Mission& mission, const Spacecraft& ship, const RouteMetrics& route) {
+    return serviceValue(mission) - 0.01 * ship.operatingCost * route.distance - route.risk -
+        (1 - route.reliability) - (1 - ship.reliability);
+}
+
 SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
     std::vector<Spacecraft> ships, const GalaxyGraph& galaxy,
     const RouteWeights& weights, bool earliestArrival,
-    const std::function<void(size_t)>& progress, const InventoryPlanningInput* inventory) {
+    const std::function<void(size_t)>& progress, const InventoryPlanningInput* inventory, bool benefitAware) {
     SchedulingResult result;
     std::optional<InventoryReservations> reservations;
     if (inventory)
@@ -104,7 +113,9 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
         result.rejectedMissionIds.push_back(mission.id);
         return true;
     });
-    std::sort(missions.begin(), missions.end(), [](const Mission& a, const Mission& b) {
+    std::sort(missions.begin(), missions.end(), [benefitAware](const Mission& a, const Mission& b) {
+        if (benefitAware && serviceValue(a) != serviceValue(b))
+            return serviceValue(a) > serviceValue(b);
         if (a.priority != b.priority)
             return a.priority > b.priority;
         if (a.deadline != b.deadline)
@@ -159,10 +170,14 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
                     if (!found)
                         continue;
                 }
-                const double score = earliestArrival ? arrival :
+                double score = earliestArrival ? arrival :
                     0.50 * (arrival - ship.availableAt) / (1 + mission.deadline - ship.availableAt) +
                     0.35 * (1 - mission.cargoAmount / ship.maxCargoCapacity) +
                     0.15 * candidate.metrics.fuel / ship.maxFuelCapacity;
+                if (benefitAware) {
+                    const double cost = ship.operatingCost * candidate.metrics.distance;
+                    score += cost / (1 + cost) + (1 - ship.reliability);
+                }
                 if (score < bestScore || (score == bestScore && arrival < bestArrival)) {
                     winner = i;
                     bestArrival = arrival;
@@ -188,7 +203,8 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
             throw std::logic_error("Selected reservation became infeasible.");
         auto& ship = ships[winner];
         result.scheduled.push_back({mission.id, ship.id, bestDeparture, bestArrival,
-            bestPath.metrics.fuel, std::move(bestPath.path), std::move(bestPath.routeIds), bestWeights});
+            bestPath.metrics.fuel, std::move(bestPath.path), std::move(bestPath.routeIds), bestWeights,
+            FlightEstimate::from(bestPath.metrics, bestDeparture, ship.speed)});
         origin->second.erase(winner);
         ship.currentLocation = mission.destination;
         ship.availableAt = bestArrival;

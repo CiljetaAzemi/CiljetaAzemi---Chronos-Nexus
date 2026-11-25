@@ -38,14 +38,23 @@ const char* reasonName(SimulationResult::ReplanningDecision::Reason reason) {
     case Reason::UrgentMission: return "urgent_mission";
     case Reason::DependentAssignment: return "dependent_assignment";
     case Reason::PreventiveSupply: return "preventive_supply";
+    case Reason::IncreasedRouteRisk: return "increased_route_risk";
+    case Reason::DisplacedBooking: return "displaced_booking";
     }
     throw std::logic_error("Unknown replanning reason");
 }
 
+Json flightEstimate(const FlightEstimate& estimate) {
+    return {{"earliest_arrival", estimate.earliestArrival}, {"expected_arrival", estimate.expectedArrival},
+        {"latest_arrival", estimate.latestArrival}, {"route_reliability", estimate.routeReliability},
+        {"route_failure_probability", 1 - estimate.routeReliability}, {"risk", estimate.risk}};
+}
+
 Json flightDecision(const ScheduledMission& entry) {
     return {{"spacecraft_id", entry.spacecraftId}, {"departure", entry.departureTime},
-        {"expected_arrival", entry.arrivalTime}, {"planned_fuel", entry.fuelUsed},
-        {"locations", entry.path}, {"route_ids", entry.routeIds}};
+        {"expected_arrival", entry.estimate.expectedArrival}, {"scheduled_arrival", entry.arrivalTime},
+        {"planned_fuel", entry.fuelUsed},
+        {"locations", entry.path}, {"route_ids", entry.routeIds}, {"uncertainty", flightEstimate(entry.estimate)}};
 }
 
 Json shortageForecast(const SimulationResult::ShortageForecast& row) {
@@ -98,7 +107,7 @@ Json score(const CivilizationMetrics& metrics) {
 }
 
 std::vector<Mission> proposeAid(const benchmark::Scenario& data, const RouteWeights& weights,
-    double horizon, Json& proposals) {
+    double horizon, Json& proposals, bool experimentalAllocator) {
     std::map<ResourceType, std::vector<ResourceDemand>> byResource;
     for (const auto& demand : data.aidDemands)
         byResource[demand.type].push_back(demand);
@@ -111,7 +120,7 @@ std::vector<Mission> proposeAid(const benchmark::Scenario& data, const RouteWeig
             nextId = std::max(nextId, static_cast<long long>(event.urgentMission->id) + 1);
     std::vector<Mission> aid;
     for (const auto& [type, demands] : byResource) {
-        const auto allocation = ResourceAllocator::allocateWithRoutes(demands, data.graph, weights);
+        const auto allocation = ResourceAllocator::allocateWithRoutes(demands, data.graph, weights, {}, experimentalAllocator);
         if (allocation.transfers.size() > static_cast<size_t>(std::numeric_limits<int>::max() - nextId))
             throw std::invalid_argument("Mission IDs leave insufficient room for generated aid missions.");
         const auto generated = LogisticsPlanner::createMissions(allocation, demands, type,
@@ -139,7 +148,7 @@ void writeResult(Input input, std::ostream& destination) {
     auto& data = input.data;
     const RouteWeights weights{0.02, 0.03, 0.5, 3.0, 2.0};
     Json proposals = Json::array();
-    const auto aid = proposeAid(data, weights, input.horizon, proposals);
+    const auto aid = proposeAid(data, weights, input.horizon, proposals, input.experimentalAllocator);
     std::unordered_set<int> colonies;
     for (const auto& colony : data.colonies)
         colonies.insert(colony.id);
@@ -150,7 +159,7 @@ void writeResult(Input input, std::ostream& destination) {
         aidIds.insert(mission.id);
     data.missions.insert(data.missions.end(), aid.begin(), aid.end());
     const InventoryPlanningInput inventory{data.inventory, data.aidDemands, aid};
-    auto initial = MissionScheduler::schedule(data.missions, data.ships, data.graph, weights, false, {}, &inventory);
+    auto initial = MissionScheduler::schedule(data.missions, data.ships, data.graph, weights, false, {}, &inventory, true);
     const auto plan = CivilizationPlanner::choose(std::move(initial), data.missions, aid, data.inventory,
         data.aidDemands, data.ships, data.graph, data.projects, objective, colonies,
         input.budget, input.horizon, weights, input.knownProductionChanges);
@@ -169,8 +178,12 @@ void writeResult(Input input, std::ostream& destination) {
     data.events.insert(data.events.end(), builds.begin(), builds.end());
     const auto forecast = SimulationEngine::run(data.graph, data.inventory, data.missions, data.ships,
         schedule, nominalEvents, {}, false, input.horizon, &nominalEvents);
+    const SimulationObjective scoring{objective, construction};
     const auto actual = SimulationEngine::run(data.graph, data.inventory, data.missions, data.ships,
-        schedule, data.events, {}, false, input.horizon, &nominalEvents);
+        schedule, data.events, {}, false, input.horizon, &nominalEvents, &scoring);
+    auto realizedObjective = objective;
+    for (const auto& request : actual.activatedUrgentMissions)
+        realizedObjective.addExternalObligation(request);
 
     Json assignments = Json::array();
     for (const auto& row : schedule.scheduled) {
@@ -212,6 +225,7 @@ void writeResult(Input input, std::ostream& destination) {
         if (const auto delivery = actual.deliveries.find(id); delivery != actual.deliveries.end()) {
             outcome["delivered_amount"] = delivery->second.amount;
             outcome["arrival"] = delivery->second.arrival;
+            outcome["uncertainty"] = flightEstimate(delivery->second.estimate);
         }
         outcomes.push_back(std::move(outcome));
     }
@@ -246,10 +260,12 @@ void writeResult(Input input, std::ostream& destination) {
         {"remaining_shortage", actual.remainingShortage}, {"stockout_amount", actual.stockoutAmount},
         {"missions", outcomes}, {"resources", resourceOutcomes(actual)},
         {"shortage_prediction", shortagePrediction(actual)},
-        {"civilization", score(objective.evaluate(actual, construction))}
+        {"civilization", score(realizedObjective.evaluate(actual, construction))},
+        {"service_obligations", realizedObjective.obligationCount()}
     };
     const Json result{
         {"version", 1}, {"horizon", input.horizon}, {"objective_profile", "balanced"},
+        {"experimental_allocator", input.experimentalAllocator},
         {"planned", planned}, {"simulation", simulation}, {"processing_seconds", measurements.elapsed()}
     };
     destination << result.dump(2) << '\n';

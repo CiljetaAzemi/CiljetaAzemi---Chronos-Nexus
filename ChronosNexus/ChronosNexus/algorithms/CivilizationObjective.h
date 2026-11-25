@@ -28,6 +28,8 @@ public:
         std::unordered_set<int> colonyIds, double horizon, double constructionBudget, Weights weights);
     CivilizationMetrics evaluate(const SimulationResult& actual,
         const InfrastructureOptimizationResult& construction) const;
+    void addExternalObligation(const Mission& mission);
+    size_t obligationCount() const { return obligations.size(); }
 
 private:
     std::vector<Mission> obligations;

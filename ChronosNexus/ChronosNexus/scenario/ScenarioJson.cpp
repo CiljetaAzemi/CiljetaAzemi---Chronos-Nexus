@@ -95,6 +95,7 @@ Input loadJson(std::istream& source) {
     check(root.is_object(), "Scenario must be a JSON object");
     check(get<int>(root, "version") == 1, "version: expected schema version 1");
     Input input;
+    input.experimentalAllocator = optional(root, "experimental_allocator", false);
     input.budget = get<int>(root, "budget");
     input.horizon = number(root, "horizon", 30);
     check(input.horizon > 0, "horizon: must be positive");
@@ -159,9 +160,18 @@ Input loadJson(std::istream& source) {
         r.to = location(row, "to");
         r.distance = number(row, "distance");
         r.travelTime = number(row, "travel_time");
+        if (row.contains("travel_time_min"))
+            r.minimumTravelTime = number(row, "travel_time_min");
+        if (row.contains("travel_time_max"))
+            r.maximumTravelTime = number(row, "travel_time_max");
+        check(r.minimumTime() <= r.travelTime && r.travelTime <= r.maximumTime(),
+            "travel time must satisfy travel_time_min <= travel_time <= travel_time_max");
         r.fuelConsumption = number(row, "fuel");
         r.maxCapacity = number(row, "capacity");
-        r.reliability = probability(row, "reliability", 1);
+        check(!row.contains("reliability") || !row.contains("failure_probability"),
+            "specify either reliability or failure_probability");
+        r.reliability = row.contains("failure_probability") ? 1 - probability(row, "failure_probability") :
+            probability(row, "reliability", 1);
         r.risk = probability(row, "risk", 0);
         r.isAvailable = optional(row, "available", true);
         r.isWormhole = optional(row, "wormhole", false);
