@@ -1,8 +1,87 @@
 #include "TestSupport.h"
 #include "../algorithms/CivilizationPlanner.h"
+#include <algorithm>
 
 namespace regression {
 void testCivilization() {
+    {
+        GalaxyGraph network;
+        addTestRoute(network, 10, 1, 2, 6, 0, 5);
+        addTestRoute(network, 11, 1, 3, 1, 0, 2);
+        addTestRoute(network, 12, 4, 3, 1, 0, 2);
+        addTestRoute(network, 13, 5, 4, 1, 0, 5);
+        const std::vector<ResourceDemand> stock{
+            {1, 5, 2, 1, ResourceType::Food, 0, 0, 5},
+            {2, 0, 4, 9, ResourceType::Food, 0, 0, 4},
+            {3, 0, 4, 3, ResourceType::Food, 0, 0, 4},
+            {4, 4, 2, 1, ResourceType::Food, 0, 0, 5},
+            {5, 2, 0, 1, ResourceType::Water, 0, 0, 5},
+            {4, 0, 0, 1, ResourceType::Water, 0, 0, 5}};
+        auto first = makeFlightFixture().ship;
+        auto second = first;
+        second.id = 2;
+        second.currentLocation = 5;
+        Mission reposition;
+        reposition.id = 10;
+        reposition.origin = 5;
+        reposition.destination = 4;
+        reposition.cargoType = ResourceType::Water;
+        reposition.cargoAmount = 1;
+        reposition.deadline = 1;
+        const std::vector<Mission> input{reposition};
+        const std::vector<Spacecraft> fleet{first, second};
+        const CivilizationObjective objective(stock, input, {}, {2, 3}, 3, 0,
+            CivilizationObjective::parseWeights("balanced"));
+        CivilizationPlan original;
+        original.schedule = MissionScheduler::schedule(input, fleet, network);
+        original.forecastScore = objective.evaluate(SimulationEngine::run(network, stock, input, fleet,
+            original.schedule, {}, {}, false, 3), {}).score;
+        auto plan = original;
+        const auto aid = CivilizationPlanner::coordinateAid(plan, input, stock, stock, fleet, network,
+            objective, {}, 3, 11);
+        require(aid.retained && aid.work.rejected > 0 && aid.work.partial > 0 && aid.missions.size() == 2 &&
+            aid.allocation.totalDelivered == 4 && plan.schedule.scheduled.size() == 3 &&
+            std::all_of(aid.missions.begin(), aid.missions.end(), [](const Mission& m) {
+                return m.destination == 3 && m.cargoAmount == 2;
+            }), "A rejected donor must remain available, and current and future carriers must split aid.");
+        auto missions = input;
+        missions.insert(missions.end(), aid.missions.begin(), aid.missions.end());
+        Event closure;
+        closure.eventType = EventType::RouteBlocked;
+        closure.affectedObjectId = 12;
+        const auto event = SimulationEngine::run(network, stock, missions, fleet, plan.schedule, {closure}, {}, false, 3);
+        require(event.completed == 2 && event.failed == 1 && event.finalResources.at(4) == 5,
+            "A closure must invalidate the affected aid without spending its reserved cargo.");
+        network.blockRoute(11);
+        network.blockRoute(12);
+        const auto impossible = CivilizationPlanner::coordinateAid(original, input, stock, stock, fleet,
+            network, objective, {}, 3, 11);
+        require(!impossible.retained && impossible.missions.empty() && original.schedule.scheduled.size() == 1,
+            "An infeasible allocation cannot modify the original plan.");
+    }
+    {
+        GalaxyGraph graph;
+        addTestRoute(graph, 21, 1, 2, 1, 0, 4);
+        addTestRoute(graph, 22, 1, 3, 2, 0, 4);
+        const std::vector<ResourceDemand> stock{
+            {1, 4, 0, 1, ResourceType::Food, 0, 0, 4},
+            {2, 0, 4, 5, ResourceType::Food, 0, 0, 4},
+            {3, 0, 4, 5, ResourceType::Food, 0, 0, 4}};
+        auto expensive = makeFlightFixture().ship;
+        expensive.operatingCost = 2;
+        auto cheap = expensive;
+        cheap.id = 2;
+        cheap.operatingCost = 1;
+        const auto weights = CivilizationObjective::parseWeights("balanced");
+        const CivilizationObjective objective(stock, {}, {}, {3}, 4, 0, weights);
+        CivilizationPlan plan;
+        plan.forecastScore = objective.evaluate(SimulationEngine::run(graph, stock, {}, {}, {}, {}, {}, false, 4), {}).score;
+        const auto aid = CivilizationPlanner::coordinateAid(plan, {}, stock, stock, {expensive, cheap},
+            graph, objective, {}, 4, 1);
+        require(aid.retained && aid.missions.size() == 1 && aid.missions[0].destination == 3 &&
+            plan.schedule.scheduled[0].spacecraftId == cheap.id,
+            "Saving critical stock may justify the longer route, while otherwise equivalent ships favor lower cost.");
+    }
     {
         auto [graph, mission, other, expensive] = makeFlightFixture();
         expensive.operatingCost = 10;

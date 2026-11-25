@@ -138,3 +138,13 @@ On the balanced continuity cases, Phase 3 scored 54.165 on small and 55.168 on m
 Scarcity exposed a policy trade-off. The balanced and security profiles selected 86 completions, with critical-colony ending shortage of 190 and critical unserved demand of four. The service profile selected 87 completions, with those two deficits at 214 and seven. The comparison is within each weight profile. Score values across profiles use different definitions. On the surprise production-cut scenario, Phase 3 matched Phase 2 on the reported quality metrics.
 
 All 36 Release x64 runs completed across nine four-mode groups. Seed 42 also reproduced Phase 2's small and medium standard outcomes under the balanced Phase 3 profile. Standard control outcomes matched the historical Phase 2 evaluation. A repeated small Phase 3 run matched the exact decision trace and objective telemetry. The matrix has one large seed and one timing observation per configuration.
+
+## Feasibility-aware allocation study
+
+Run the Release x64 study from the repository root using the preserved pre-decision-making executable and the current executable:
+
+```powershell
+./ChronosNexus/Run-Allocation-Study.ps1 -OriginalExecutable PATH_TO_ORIGINAL_EXE -Executable PATH_TO_CURRENT_EXE -OutputDirectory PATH_TO_NEW_RESULTS_DIRECTORY
+```
+
+The runner uses the same dataset generator, events, balanced objective, 35-second wall budget, and 1,024 MiB working-set budget for each configuration. See the [paired measurements](feasibility-aware-allocation.csv) and the [scarcity trace summary](feasibility-aware-scarcity-traces.csv). `tentative_cargo` sums requested upper bounds across probes and can count the same stock in several alternative attempts. `released_attempts` counts rejected probes whose trial state is discarded. No permanent reservation needs to be released for those failures. `trial_committed_cargo` precedes whole-plan objective acceptance, while `scheduled_aid_cargo` observes the retained schedule. Uninstrumented historical measurements are marked `NA`. The graph counter includes coordination expansions and the selected schedule's counters. It does not aggregate every discarded Phase 3 candidate. `completion_rate` uses scheduled plus rejected mission IDs, so its denominator changes with the set of aid missions; the fixed-obligation service measure remains available as `input_service`.

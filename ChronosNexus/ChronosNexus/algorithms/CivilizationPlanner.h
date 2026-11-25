@@ -10,8 +10,19 @@ struct CivilizationPlan {
     int feasible = 0;
 };
 
+struct CoordinatedAid {
+    std::vector<Mission> missions;
+    AllocationResult allocation;
+    SimulationResult::AllocationWork work;
+    bool retained = false;
+};
+
 class CivilizationPlanner {
 public:
+    static CoordinatedAid coordinateAid(CivilizationPlan& plan, const std::vector<Mission>& obligations,
+        const std::vector<ResourceDemand>& accounts, const std::vector<ResourceDemand>& network,
+        const std::vector<Spacecraft>& ships, const GalaxyGraph& graph, const CivilizationObjective& objective,
+        const std::vector<Event>& knownSupply, double horizon, int firstAidId);
     // Construction events are generated from committed projects.
     static std::vector<Event> constructionEvents(const std::vector<Infrastructure>& projects,
         const InfrastructureOptimizationResult& construction);

@@ -19,6 +19,10 @@ struct SupplySearch {
     double horizon;
     double minimumCargo;
     double assignedCargo = 0;
+    bool requirePrevention = true;
+    bool considerOperatingCost = false;
+    long long routeQueries = 0;
+    long long feasibilityChecks = 0;
 };
 
 std::optional<ScheduledMission> findAssignment(const Mission& mission,

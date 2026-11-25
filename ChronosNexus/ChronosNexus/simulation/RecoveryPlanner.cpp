@@ -72,13 +72,23 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
     auto weights = previous ? previous->weights : standard;
     if (reconsiderRisk && weights.risk == 0)
         weights.risk = standard.risk;
+    std::unordered_map<int, const Spacecraft*> pricedShips;
+    if (supply && supply->considerOperatingCost)
+        for (const auto& slot : slots)
+            pricedShips.emplace(slot.ship.id, &slot.ship);
     auto rank = [&](const ScheduledMission& row) {
         const bool unchanged = previous && row.spacecraftId == previous->spacecraftId &&
             row.departureTime == previous->departureTime && row.routeIds == previous->routeIds;
         double routeCost = 0;
-        if (reconsiderRisk)
+        if (reconsiderRisk || (supply && supply->considerOperatingCost))
             for (int edge : row.routeIds)
                 routeCost += Dijkstra::edgeCost(*graph.findRoute(edge), weights);
+        if (supply && supply->considerOperatingCost) {
+            const auto& ship = *pricedShips.at(row.spacecraftId);
+            routeCost += 1 - ship.reliability;
+            for (int edge : row.routeIds)
+                routeCost += 0.01 * graph.findRoute(edge)->distance * ship.operatingCost;
+        }
         return std::tuple{routeCost, !unchanged, previous && row.spacecraftId != previous->spacecraftId,
             row.arrivalTime, row.fuelUsed, row.spacecraftId};
     };
@@ -114,6 +124,8 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
                 times.erase(std::unique(times.begin(), times.end()), times.end());
             }
             auto feasibleAt = [&](double departure, double cargo, double& arrival) {
+                if (supply)
+                    ++supply->feasibilityChecks;
                 auto job = mission;
                 job.cargoAmount = cargo;
                 if (departure < earliest || !MissionScheduler::feasible(job, ship, departure, path.metrics, arrival) ||
@@ -133,7 +145,7 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
                     if (donorAfter.unserved > donorBefore.unserved ||
                         donorAfter.endingShortage > donorBefore.endingShortage ||
                         (donorAfter.depletion && (!donorBefore.depletion || *donorAfter.depletion < *donorBefore.depletion)) ||
-                        (recipient.depletion && now + *recipient.depletion <= mission.deadline) ||
+                        (supply->requirePrevention && recipient.depletion && now + *recipient.depletion <= mission.deadline) ||
                         !improvesRecipient)
                         return false;
                 }
@@ -192,6 +204,8 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
     }
     auto search = [&](double cargo) {
         for (const auto& strategy : std::array{weights, RouteWeights{0, 1, 0}, RouteWeights{0, 0, 1}}) {
+            if (supply)
+                ++supply->routeQueries;
             auto path = Dijkstra::findShortestPath(graph, mission.origin, mission.destination, strategy, cargo);
             nodesExplored += path.nodesExplored;
             if (path.found && std::find(searched.begin(), searched.end(), path.routeIds) == searched.end()) {

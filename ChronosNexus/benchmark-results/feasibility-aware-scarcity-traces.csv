@@ -1,0 +1,7 @@
+"variant","size","seed","score","critical_cargo_proposed","critical_cargo_delivered","critical_colonies_proposed","critical_colonies_served","critical_ending_shortage","critical_unserved","inventory_failures","waste","scheduled_aid_cargo","rejected_aid","rejected_tentative"
+"consolidated","small","20261119","50.6948515092","23","21","1","1","17","0","0","0","21","7","NA"
+"consolidated","medium","20261120","52.1549189994","230","230","10","10","150","0","0","0","312","67","NA"
+"competing-recipients","small","20261119","48.9848563464","8","8","1","1","30","0","0","0","8","7","NA"
+"competing-recipients","medium","20261120","49.6848465216","80","80","4","4","282","18","0","0","209","64","NA"
+"feasibility-aware","small","20261119","51.1009960751","24","24","1","1","14","0","0","0","24","0","5"
+"feasibility-aware","medium","20261120","55.7809046036","380","380","10","10","0","0","0","0","412","0","649"

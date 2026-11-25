@@ -58,7 +58,8 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
     const std::vector<ResourceDemand>& planets, const std::vector<Mission>& missions,
     const std::vector<Spacecraft>& spacecraft, const SchedulingResult& schedule,
     const std::vector<Event>& events, const std::function<void(size_t)>& progress,
-    bool recheckAllDepartures, double minimumHorizon, const std::vector<Event>* knownSupplyEvents, const SimulationObjective* scoring) {
+    bool recheckAllDepartures, double minimumHorizon, const std::vector<Event>* knownSupplyEvents,
+    const SimulationObjective* scoring, const std::vector<ResourceDemand>* allocationNetwork) {
     SimulationResult result;
     result.scheduled = static_cast<int>(schedule.scheduled.size());
     GalaxyGraph active = galaxy;
@@ -229,7 +230,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
     std::deque<Mission> preventiveMissions;
     std::unordered_set<int> urgentIds;
     long long nextPreventiveId = 0;
-    if (knownSupplyEvents || scoring) {
+    if (knownSupplyEvents || scoring || allocationNetwork) {
         for (const auto& [location, row] : balances)
             for (const auto& [type, stock] : row)
                 accounts.emplace(location, type);
@@ -237,6 +238,10 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             if (event.urgentMission)
                 urgentIds.insert(event.urgentMission->id);
     }
+    std::map<Key, int> allocationPriorities;
+    if (allocationNetwork)
+        for (const auto& demand : *allocationNetwork)
+            allocationPriorities.emplace(Key{demand.planetId, demand.type}, demand.priority);
     auto predictAndPrevent = [&](const std::set<Key>& affected, const Event& trigger) {
         if (affected.empty() || now > minimumHorizon)
             return;
@@ -246,7 +251,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             types.insert(key.second);
         std::set<Key> relevant;
         for (const auto& key : accounts)
-            if (types.contains(key.second))
+            if (types.contains(key.second) && (!allocationNetwork || allocationPriorities.contains(key)))
                 relevant.insert(key);
         auto inventory = inventoryFor(relevant);
         std::unordered_set<int> shipLocations;
@@ -268,6 +273,8 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                 row.depletion ? std::optional<double>(now + *row.depletion) : std::nullopt};
         };
         const auto needsSupply = [&](const SimulationResult::ShortageForecast& row) {
+            if (allocationNetwork)
+                return row.endingShortage > 0 || row.unserved > 0;
             return row.depletionTime && (*row.depletionTime < minimumHorizon ||
                 row.unserved > 0 || row.endingShortage > 0);
         };
@@ -278,7 +285,17 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             if (needsSupply(row))
                 risk.push_back(row);
         }
-        std::sort(risk.begin(), risk.end(), [](const auto& a, const auto& b) {
+        std::sort(risk.begin(), risk.end(), [&](const auto& a, const auto& b) {
+            if (allocationNetwork) {
+                const auto rank = [&](const auto& row) {
+                    const bool essential = row.resource == ResourceType::Food || row.resource == ResourceType::Medicine;
+                    const bool critical = scoring && scoring->initial.isCriticalResource(row.location, row.resource);
+                    return std::tuple{!critical, !essential, row.depletionTime.value_or(minimumHorizon),
+                        -static_cast<long long>(allocationPriorities.at({row.location, row.resource})),
+                        -row.endingShortage, row.location, row.resource};
+                };
+                return rank(a) < rank(b);
+            }
             return std::tie(a.depletionTime, a.location, a.resource) <
                 std::tie(b.depletionTime, b.location, b.resource);
         });
@@ -290,7 +307,9 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             auto residual = before;
             bool accepted = false;
             // Every shipment in this batch must beat the original depletion time.
-            const double deadline = std::nextafter(*before.depletionTime, now);
+            const double deadline = before.depletionTime && *before.depletionTime > now
+                ? std::nextafter(*before.depletionTime, now)
+                : allocationNetwork ? minimumHorizon : now;
             if (deadline > now) {
                 auto lowerPriority = [](const auto& a, const auto& b) {
                     return a.first != b.first ? a.first < b.first : a.second > b.second;
@@ -325,6 +344,8 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                     job.destination = key.first;
                     job.cargoType = key.second;
                     job.deadline = deadline;
+                    if (allocationNetwork)
+                        job.priority = allocationPriorities.at(key);
                     const double need = residual.unserved + residual.endingShortage;
                     const double desired = need > 0 ? need : 1.0;
                     job.cargoAmount = std::min({desired, surplus, storage});
@@ -332,14 +353,33 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                     const double scale = std::max({1.0, desired, accountAtNow(key).available,
                         accountAtNow({donor, key.second}).available});
                     recovery::SupplySearch search{remaining, 8 * std::numeric_limits<double>::epsilon() * scale};
+                    if (allocationNetwork) {
+                        search.requirePrevention = before.depletionTime && *before.depletionTime > now;
+                        search.considerOperatingCost = true;
+                    }
                     if (job.cargoAmount < search.minimumCargo)
                         continue;
+                    if (allocationNetwork) {
+                        ++result.allocationWork.attempted;
+                        result.allocationWork.proposedCargo += job.cargoAmount;
+                    }
                     auto replacement = findReplacement(job, nullptr, {}, &search, &inventory);
+                    if (allocationNetwork) {
+                        result.allocationWork.routeQueries += search.routeQueries;
+                        result.allocationWork.feasibilityChecks += search.feasibilityChecks;
+                    }
                     // Booking more inbound cargo cannot free a donor slot or create
                     // storage at this recipient. Retire suppliers the search exhausts.
-                    if (!replacement)
+                    if (!replacement) {
+                        if (allocationNetwork)
+                            ++result.allocationWork.rejected;
                         continue;
+                    }
+                    if (allocationNetwork && search.assignedCargo < job.cargoAmount)
+                        ++result.allocationWork.partial;
                     job.cargoAmount = search.assignedCargo;
+                    if (allocationNetwork)
+                        result.allocationWork.committedCargo += job.cargoAmount;
                     ++nextPreventiveId;
                     preventiveMissions.push_back(job);
                     missionById.emplace(job.id, &preventiveMissions.back());
@@ -537,6 +577,14 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         return std::nullopt;
     };
 
+    if (allocationNetwork) {
+        std::set<Key> participants;
+        for (const auto& key : accounts)
+            if (allocationPriorities.contains(key))
+                participants.insert(key);
+        predictAndPrevent(participants, Event{});
+        return result;
+    }
     if (knownSupplyEvents)
         predictAndPrevent(accounts, Event{});
     beforeFirstEvent = false;

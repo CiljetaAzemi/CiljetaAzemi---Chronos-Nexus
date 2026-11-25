@@ -1,6 +1,10 @@
 #pragma once
 
 #include <cmath>
+#include <algorithm>
+#include <limits>
+#include <stdexcept>
+#include "../models/Event.h"
 #include <unordered_map>
 #include "ResourceAllocator.h"
 #include "MissionScheduler.h"
@@ -13,6 +17,18 @@ struct LogisticsPlan {
 
 class LogisticsPlanner {
 public:
+    static int firstAvailableMissionId(const std::vector<Mission>& missions, const std::vector<Event>& events) {
+        int largest = -1;
+        for (const auto& mission : missions)
+            largest = std::max(largest, mission.id);
+        for (const auto& event : events)
+            if (event.urgentMission)
+                largest = std::max(largest, event.urgentMission->id);
+        if (largest == std::numeric_limits<int>::max())
+            throw std::invalid_argument("No IDs available for aid missions.");
+        return largest + 1;
+    }
+
     static std::vector<Mission> createMissions(const AllocationResult& allocation,
         const std::vector<ResourceDemand>& demands, ResourceType resourceType,
         double deadline, int nextMissionId = 1) {

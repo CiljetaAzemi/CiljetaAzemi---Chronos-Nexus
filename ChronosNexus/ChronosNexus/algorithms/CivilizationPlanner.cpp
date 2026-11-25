@@ -2,6 +2,8 @@
 #include "PlanImprover.h"
 
 #include <algorithm>
+#include <limits>
+#include <stdexcept>
 #include <map>
 #include <set>
 #include <tuple>
@@ -187,4 +189,68 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
     best.evaluated = evaluated;
     best.feasible = feasible;
     return best;
+}
+CoordinatedAid CivilizationPlanner::coordinateAid(CivilizationPlan& plan, const std::vector<Mission>& obligations,
+    const std::vector<ResourceDemand>& accounts, const std::vector<ResourceDemand>& network,
+    const std::vector<Spacecraft>& ships, const GalaxyGraph& graph, const CivilizationObjective& objective,
+    const std::vector<Event>& knownSupply, double horizon, int firstAidId) {
+    CoordinatedAid aid;
+    if (network.empty())
+        return aid;
+    const SimulationObjective scoring{objective, plan.construction};
+    const auto trial = SimulationEngine::run(graph, accounts, obligations, ships, plan.schedule,
+        {}, {}, false, horizon, &knownSupply, &scoring, &network);
+    aid.work = trial.allocationWork;
+    aid.allocation.nodesExplored = trial.nodesExplored;
+    aid.allocation.candidates = trial.allocationWork.routeQueries;
+    auto candidate = plan.schedule;
+    auto missions = obligations;
+    for (const auto& proposal : trial.preventiveDecisions) {
+        if (!proposal.assignment || !proposal.mission)
+            continue;
+        if (firstAidId == std::numeric_limits<int>::max())
+            throw std::invalid_argument("Not enough mission IDs for coordinated aid.");
+        auto assignment = *proposal.assignment;
+        auto mission = *proposal.mission;
+        assignment.missionId = mission.id = firstAidId++;
+        missions.push_back(mission);
+        aid.missions.push_back(mission);
+        candidate.scheduled.push_back(assignment);
+        ++candidate.missionsScheduled;
+        double routeCost = 0;
+        for (int edge : assignment.routeIds)
+            routeCost += Dijkstra::edgeCost(*graph.findRoute(edge), assignment.weights);
+        aid.allocation.transfers.push_back({mission.origin, mission.destination, mission.cargoAmount,
+            routeCost * mission.cargoAmount, assignment.path, assignment.routeIds});
+        aid.allocation.totalDelivered += mission.cargoAmount;
+    }
+    if (aid.missions.empty())
+        return aid;
+    ++plan.evaluated;
+    const auto forecast = SimulationEngine::run(graph, accounts, missions, ships, candidate,
+        knownSupply, {}, false, horizon);
+    std::unordered_map<int, const Mission*> byId;
+    for (const auto& job : missions)
+        byId.emplace(job.id, &job);
+    const bool fullDeliveries = std::all_of(candidate.scheduled.begin(), candidate.scheduled.end(), [&](const auto& row) {
+        const auto delivery = forecast.deliveries.find(row.missionId);
+        if (delivery == forecast.deliveries.end())
+            return false;
+        const auto& job = *byId.at(row.missionId);
+        return delivery->second.arrival <= job.deadline && delivery->second.amount + 1e-8 >= job.cargoAmount;
+    });
+    if (fullDeliveries) {
+        ++plan.feasible;
+        const double score = objective.evaluate(forecast, plan.construction).score;
+        if (score > plan.forecastScore + 1e-9) {
+            plan.schedule = std::move(candidate);
+            plan.forecastScore = score;
+            aid.retained = true;
+            return aid;
+        }
+    }
+    aid.missions.clear();
+    aid.allocation.transfers.clear();
+    aid.allocation.totalDelivered = 0;
+    return aid;
 }

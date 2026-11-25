@@ -30,6 +30,7 @@ public:
         const InfrastructureOptimizationResult& construction) const;
     void addExternalObligation(const Mission& mission);
     size_t obligationCount() const { return obligations.size(); }
+    bool isCriticalResource(int location, ResourceType resource) const;
 
 private:
     std::vector<Mission> obligations;

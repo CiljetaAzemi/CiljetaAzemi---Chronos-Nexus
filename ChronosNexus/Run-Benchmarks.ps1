@@ -16,7 +16,10 @@ param(
     [string]$ObjectiveProfile = 'balanced',
     [ValidateSet('standard', 'scarcity', 'production-cut')]
     [string]$Scenario = 'standard',
-    [switch]$CivilizationMetrics
+    [switch]$CivilizationMetrics,
+    [switch]$FeasibilityAwareAllocator,
+    [switch]$ExperimentalAllocator,
+    [switch]$AllocationMetrics
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,6 +70,8 @@ foreach ($size in $Sizes) {
             if ($TracePlan) { $arguments += '--trace-plan' }
             if ($includeCivilization) { $arguments += "--objective=$ObjectiveProfile" }
             if ($Scenario -ne 'standard') { $arguments += "--scenario=$Scenario" }
+            if ($FeasibilityAwareAllocator) { $arguments += '--feasibility-aware-allocator' }
+            if ($ExperimentalAllocator) { $arguments += '--experimental-allocator' }
             $process = Start-Process -FilePath $exe -ArgumentList $arguments `
                 -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -WindowStyle Hidden
             $null = $process.Handle
@@ -177,6 +182,17 @@ foreach ($size in $Sizes) {
         if ($includeCivilization) {
             for ($i = 0; $i -lt $civilizationFields.Count; ++$i) {
                 $row[$civilizationFields[$i]] = if ($status -eq 'complete') { $civilization[$i + 1] } else { 'NA' }
+            }
+        }
+        if ($AllocationMetrics) {
+            $aidCargo = ($lines | Where-Object { $_ -like 'AID_CARGO,*' } | Select-Object -Last 1) -split ','
+            $work = ($lines | Where-Object { $_ -like 'COORDINATED_AID,*' } | Select-Object -Last 1) -split ','
+            $row['scheduled_aid_cargo'] = if ($aidCargo.Count -eq 3) { $aidCargo[1] } else {'NA'}
+            $row['rejected_aid_missions'] = if ($aidCargo.Count -eq 3) { $aidCargo[2] } else {'NA'}
+            $extra = @('allocation_attempts','released_attempts','partial_commitments','coordination_route_queries',
+                'allocation_feasibility_checks','tentative_cargo','trial_committed_cargo','aid_candidate_retained')
+            for ($i = 0; $i -lt $extra.Count; ++$i) {
+                $row[$extra[$i]] = if ($work.Count -eq $extra.Count + 1) { $work[$i + 1] } else {'NA'}
             }
         }
         [pscustomobject]$row | Export-Csv -LiteralPath $csv -Append -NoTypeInformation

@@ -96,6 +96,8 @@ Input loadJson(std::istream& source) {
     check(get<int>(root, "version") == 1, "version: expected schema version 1");
     Input input;
     input.experimentalAllocator = optional(root, "experimental_allocator", false);
+    input.feasibilityAwareAllocator = optional(root, "feasibility_aware_allocator", false);
+    check(!input.experimentalAllocator || !input.feasibilityAwareAllocator, "choose only one experimental allocator");
     input.budget = get<int>(root, "budget");
     input.horizon = number(root, "horizon", 30);
     check(input.horizon > 0, "horizon: must be positive");

@@ -51,7 +51,7 @@ void addStressClosures(const SchedulingResult& schedule, std::vector<Event>& eve
 int runBenchmark(int argc, char* argv[]) {
     if (argc < 4)
         throw std::invalid_argument(
-            "Usage: --benchmark SIZE SEED [MODE [--trace-plan] [--objective=PROFILE] [--scenario=CASE] [--experimental-allocator]]");
+            "Usage: --benchmark SIZE SEED [MODE [--trace-plan] [--objective=PROFILE] [--scenario=CASE] [--experimental-allocator|--feasibility-aware-allocator]]");
     const std::string name = argv[2];
     const auto size = benchmark::dimensions(name);
     size_t consumed = 0;
@@ -68,6 +68,7 @@ int runBenchmark(int argc, char* argv[]) {
         throw std::invalid_argument("Unknown benchmark mode.");
     bool trace = false, reportCivilization = civilization;
     bool experimentalAllocator = false;
+    bool feasibilityAwareAllocator = false;
     std::string profile = "balanced", scenario = "standard";
     for (int i = 5; i < argc; ++i) {
         const std::string option = argv[i];
@@ -75,6 +76,8 @@ int runBenchmark(int argc, char* argv[]) {
             trace = true;
         else if (option == "--experimental-allocator")
             experimentalAllocator = true;
+        else if (option == "--feasibility-aware-allocator")
+            feasibilityAwareAllocator = true;
         else if (option.starts_with("--objective=")) {
             profile = option.substr(12);
             reportCivilization = true;
@@ -85,6 +88,8 @@ int runBenchmark(int argc, char* argv[]) {
     }
     if (scenario != "standard" && scenario != "scarcity" && scenario != "production-cut")
         throw std::invalid_argument("Expected standard, scarcity, or production-cut scenario.");
+    if (feasibilityAwareAllocator && (!civilization || experimentalAllocator))
+        throw std::invalid_argument("Feasibility-aware allocation requires phase3 and a single allocator.");
     const auto coefficients = CivilizationObjective::parseWeights(profile);
 
     benchmark::Measurements measurements;
@@ -136,7 +141,7 @@ int runBenchmark(int argc, char* argv[]) {
 
     const RouteWeights weights{0.02, 0.03, 0.5, 3.0, 2.0};
     measurements.report("allocation", 0, 0, true);
-    const auto allocation = mode == "basic" ? ResourceAllocator::allocate(data.aidDemands) :
+    auto allocation = feasibilityAwareAllocator ? AllocationResult{} : mode == "basic" ? ResourceAllocator::allocate(data.aidDemands) :
         ResourceAllocator::allocateWithRoutes(data.aidDemands, data.graph, weights,
             [&](size_t count) { measurements.report("allocation", count, 0); }, experimentalAllocator);
     auto aid = LogisticsPlanner::createMissions(allocation, data.aidDemands,
@@ -164,6 +169,18 @@ int runBenchmark(int argc, char* argv[]) {
         selected = CivilizationPlanner::choose(std::move(schedule), data.missions, aid,
             data.inventory, data.aidDemands, data.ships, data.graph, data.projects,
             objective, colonies, budget, 30, weights);
+        if (feasibilityAwareAllocator) {
+            const auto builds = CivilizationPlanner::constructionEvents(data.projects, selected.construction);
+            auto coordinated = CivilizationPlanner::coordinateAid(selected, data.missions, data.inventory,
+                data.aidDemands, data.ships, data.graph, objective, builds, 30, size.missions);
+            aid = std::move(coordinated.missions);
+            allocation = std::move(coordinated.allocation);
+            data.missions.insert(data.missions.end(), aid.begin(), aid.end());
+            const auto& work = coordinated.work;
+            std::cout << "COORDINATED_AID," << work.attempted << ',' << work.rejected << ',' << work.partial
+                      << ',' << work.routeQueries << ',' << work.feasibilityChecks << ',' << work.proposedCargo
+                      << ',' << work.committedCargo << ',' << coordinated.retained << '\n';
+        }
         schedule = std::move(selected.schedule);
     }
     // Alternative suppliers change the source, while obligation ID, quantity and deadline stay fixed.
@@ -204,6 +221,25 @@ int runBenchmark(int argc, char* argv[]) {
     measurements.report("complete", 0, actual.completed + actual.failed, true);
     benchmark::reportResults(data.missions, size.missions, aid.size(), allocation, schedule, construction,
         actual, infrastructureSeconds, measurements, inventoryMode, improve, trace);
+    std::unordered_map<int, double> pendingAid;
+    for (const auto& job : aid)
+        pendingAid.emplace(job.id, job.cargoAmount);
+    double scheduledAidCargo = 0;
+    size_t scheduledAid = 0;
+    for (const auto& row : schedule.scheduled)
+        if (const auto job = pendingAid.find(row.missionId); job != pendingAid.end()) {
+            scheduledAidCargo += job->second;
+            ++scheduledAid;
+        }
+    std::cout << "AID_CARGO," << scheduledAidCargo << ',' << aid.size() - scheduledAid << '\n';
+    if (trace) {
+        for (const auto& job : aid) {
+            const auto delivery = actual.deliveries.find(job.id);
+            std::cout << "AID_TRACE," << job.id << ',' << job.origin << ',' << job.destination << ','
+                      << job.cargoAmount << ',' << job.deadline << ','
+                      << (delivery == actual.deliveries.end() ? 0 : delivery->second.amount) << '\n';
+        }
+    }
     if (reportCivilization) {
         auto realizedObjective = objective;
         for (const auto& request : actual.activatedUrgentMissions)

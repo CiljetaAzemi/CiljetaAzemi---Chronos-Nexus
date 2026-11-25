@@ -148,7 +148,8 @@ void writeResult(Input input, std::ostream& destination) {
     auto& data = input.data;
     const RouteWeights weights{0.02, 0.03, 0.5, 3.0, 2.0};
     Json proposals = Json::array();
-    const auto aid = proposeAid(data, weights, input.horizon, proposals, input.experimentalAllocator);
+    auto aid = input.feasibilityAwareAllocator ? std::vector<Mission>{} :
+        proposeAid(data, weights, input.horizon, proposals, input.experimentalAllocator);
     std::unordered_set<int> colonies;
     for (const auto& colony : data.colonies)
         colonies.insert(colony.id);
@@ -160,9 +161,28 @@ void writeResult(Input input, std::ostream& destination) {
     data.missions.insert(data.missions.end(), aid.begin(), aid.end());
     const InventoryPlanningInput inventory{data.inventory, data.aidDemands, aid};
     auto initial = MissionScheduler::schedule(data.missions, data.ships, data.graph, weights, false, {}, &inventory, true);
-    const auto plan = CivilizationPlanner::choose(std::move(initial), data.missions, aid, data.inventory,
+    auto plan = CivilizationPlanner::choose(std::move(initial), data.missions, aid, data.inventory,
         data.aidDemands, data.ships, data.graph, data.projects, objective, colonies,
         input.budget, input.horizon, weights, input.knownProductionChanges);
+    CoordinatedAid coordinated;
+    if (input.feasibilityAwareAllocator) {
+        auto known = input.knownProductionChanges;
+        const auto builds = CivilizationPlanner::constructionEvents(data.projects, plan.construction);
+        known.insert(known.end(), builds.begin(), builds.end());
+        coordinated = CivilizationPlanner::coordinateAid(plan, data.missions, data.inventory, data.aidDemands,
+            data.ships, data.graph, objective, known, input.horizon,
+            LogisticsPlanner::firstAvailableMissionId(data.missions, data.events));
+        for (size_t i = 0; i < coordinated.missions.size(); ++i) {
+            const auto& mission = coordinated.missions[i];
+            const auto& transfer = coordinated.allocation.transfers[i];
+            aidIds.insert(mission.id);
+            proposals.push_back({{"mission_id", mission.id}, {"origin", mission.origin},
+                {"destination", mission.destination}, {"resource", resourceName(mission.cargoType)},
+                {"amount", mission.cargoAmount}, {"transportation_cost", transfer.transportationCost},
+                {"route_ids", transfer.routeIds}, {"confirmed", true}});
+        }
+        data.missions.insert(data.missions.end(), coordinated.missions.begin(), coordinated.missions.end());
+    }
     const auto& schedule = plan.schedule;
     const auto& construction = plan.construction;
     std::map<int, const Mission*> missions;
@@ -266,6 +286,11 @@ void writeResult(Input input, std::ostream& destination) {
     const Json result{
         {"version", 1}, {"horizon", input.horizon}, {"objective_profile", "balanced"},
         {"experimental_allocator", input.experimentalAllocator},
+        {"feasibility_aware_allocator", input.feasibilityAwareAllocator},
+        {"allocation_work", {{"attempts", coordinated.work.attempted}, {"rejected", coordinated.work.rejected},
+            {"route_queries", coordinated.work.routeQueries}, {"feasibility_checks", coordinated.work.feasibilityChecks},
+            {"partial", coordinated.work.partial}, {"proposed_cargo", coordinated.work.proposedCargo},
+            {"trial_committed_cargo", coordinated.work.committedCargo}, {"retained", coordinated.retained}}},
         {"planned", planned}, {"simulation", simulation}, {"processing_seconds", measurements.elapsed()}
     };
     destination << result.dump(2) << '\n';

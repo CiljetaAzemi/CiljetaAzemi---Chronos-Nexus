@@ -66,6 +66,10 @@ void CivilizationObjective::addExternalObligation(const Mission& mission) {
     serviceRef += mission.cargoAmount * std::max(0, mission.priority);
 }
 
+bool CivilizationObjective::isCriticalResource(int location, ResourceType resource) const {
+    return colonies.contains(location) && essential(resource);
+}
+
 CivilizationMetrics CivilizationObjective::evaluate(const SimulationResult& actual,
     const InfrastructureOptimizationResult& construction) const {
     CivilizationMetrics m{};
