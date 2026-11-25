@@ -39,6 +39,13 @@ void testCivilization() {
         auto plan = original;
         const auto aid = CivilizationPlanner::coordinateAid(plan, input, stock, stock, fleet, network,
             objective, {}, 3, 11);
+        auto legacy = original;
+        const auto oldAid = CivilizationPlanner::coordinateAid(legacy, input, stock, stock, fleet, network,
+            objective, {}, 3, 11, false);
+        requireSamePlan(plan.schedule, legacy.schedule);
+        require(aid.retained == oldAid.retained && aid.allocation.totalDelivered == oldAid.allocation.totalDelivered &&
+            plan.forecastScore == legacy.forecastScore,
+            "Indexed aid must reproduce legacy assignments, including a future spacecraft.");
         require(aid.retained && aid.work.rejected > 0 && aid.work.partial > 0 && aid.missions.size() == 2 &&
             aid.allocation.totalDelivered == 4 && plan.schedule.scheduled.size() == 3 &&
             std::all_of(aid.missions.begin(), aid.missions.end(), [](const Mission& m) {

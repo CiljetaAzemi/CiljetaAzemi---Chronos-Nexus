@@ -2,6 +2,7 @@
 #include "PlanImprover.h"
 
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <map>
@@ -193,13 +194,15 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
 CoordinatedAid CivilizationPlanner::coordinateAid(CivilizationPlan& plan, const std::vector<Mission>& obligations,
     const std::vector<ResourceDemand>& accounts, const std::vector<ResourceDemand>& network,
     const std::vector<Spacecraft>& ships, const GalaxyGraph& graph, const CivilizationObjective& objective,
-    const std::vector<Event>& knownSupply, double horizon, int firstAidId) {
+    const std::vector<Event>& knownSupply, double horizon, int firstAidId, bool indexedAid) {
     CoordinatedAid aid;
     if (network.empty())
         return aid;
     const SimulationObjective scoring{objective, plan.construction};
+    auto started = std::chrono::steady_clock::now();
     const auto trial = SimulationEngine::run(graph, accounts, obligations, ships, plan.schedule,
-        {}, {}, false, horizon, &knownSupply, &scoring, &network);
+        {}, {}, false, horizon, &knownSupply, &scoring, &network, indexedAid);
+    aid.coordinationSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     aid.work = trial.allocationWork;
     aid.allocation.nodesExplored = trial.nodesExplored;
     aid.allocation.candidates = trial.allocationWork.routeQueries;
@@ -227,8 +230,10 @@ CoordinatedAid CivilizationPlanner::coordinateAid(CivilizationPlan& plan, const 
     if (aid.missions.empty())
         return aid;
     ++plan.evaluated;
+    started = std::chrono::steady_clock::now();
     const auto forecast = SimulationEngine::run(graph, accounts, missions, ships, candidate,
         knownSupply, {}, false, horizon);
+    aid.replaySeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     std::unordered_map<int, const Mission*> byId;
     for (const auto& job : missions)
         byId.emplace(job.id, &job);

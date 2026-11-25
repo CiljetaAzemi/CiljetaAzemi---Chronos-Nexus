@@ -148,3 +148,14 @@ Run the Release x64 study from the repository root using the preserved pre-decis
 ```
 
 The runner uses the same dataset generator, events, balanced objective, 35-second wall budget, and 1,024 MiB working-set budget for each configuration. See the [paired measurements](feasibility-aware-allocation.csv) and the [scarcity trace summary](feasibility-aware-scarcity-traces.csv). `tentative_cargo` sums requested upper bounds across probes and can count the same stock in several alternative attempts. `released_attempts` counts rejected probes whose trial state is discarded. No permanent reservation needs to be released for those failures. `trial_committed_cargo` precedes whole-plan objective acceptance, while `scheduled_aid_cargo` observes the retained schedule. Uninstrumented historical measurements are marked `NA`. The graph counter includes coordination expansions and the selected schedule's counters. It does not aggregate every discarded Phase 3 candidate. `completion_rate` uses scheduled plus rejected mission IDs, so its denominator changes with the set of aid missions; the fixed-obligation service measure remains available as `input_service`.
+
+## Feasibility-aware allocation performance
+
+```powershell
+./ChronosNexus/Run-Allocation-Performance.ps1 -Executable PATH_TO_RELEASE_X64_EXE -OutputDirectory PATH_TO_NEW_RESULTS_DIRECTORY
+./ChronosNexus/Run-Allocation-Performance.ps1 -Executable PATH_TO_RELEASE_X64_EXE -Diagnostic -OutputDirectory PATH_TO_NEW_DIAGNOSTIC_DIRECTORY
+```
+
+The normal study uses a 35-second wall limit and 1,024 MiB working-set limit, repeating both scarcity fixtures three times. The diagnostic option uses a 120-second wall limit. These limits are experimental. The runner compares the consolidated default, the previous full-ship aid search, and the indexed search in one binary. The SHA-256 field covers assignment, rejection, recovered mission, aid delivery, and civilization-score trace lines. The timing fields distinguish civilization planning, aid coordination, and its nominal replay. Reported route time is included in recovery time. The itinerary counter counts per-probe legacy validations and indexed initial or changed-tail validations. The setup timer includes collection of legacy plans or indexed lookup and maintenance. It excludes legacy booking replay, which is included in recovery time.
+
+All ten completed legacy/indexed pairs matched on decision traces and reported quality. Both aid variants timed out during aid coordination on both Large cases at 35 seconds. The consolidated default completed both. A separate 120-second diagnostic of Large standard seed `20261120` timed out for both the preserved pre-index executable and the indexed executable. The pre-index executable predates the separate aid-stage marker. The indexed executable began aid coordination at 29.53 seconds. [Paired measurements](allocation-performance.csv) · [Diagnostic measurements](allocation-performance-diagnostic.csv)

@@ -69,6 +69,7 @@ int runBenchmark(int argc, char* argv[]) {
     bool trace = false, reportCivilization = civilization;
     bool experimentalAllocator = false;
     bool feasibilityAwareAllocator = false;
+    bool indexedAid = true;
     std::string profile = "balanced", scenario = "standard";
     for (int i = 5; i < argc; ++i) {
         const std::string option = argv[i];
@@ -78,6 +79,8 @@ int runBenchmark(int argc, char* argv[]) {
             experimentalAllocator = true;
         else if (option == "--feasibility-aware-allocator")
             feasibilityAwareAllocator = true;
+        else if (option == "--legacy-aid-search")
+            indexedAid = false;
         else if (option.starts_with("--objective=")) {
             profile = option.substr(12);
             reportCivilization = true;
@@ -90,6 +93,8 @@ int runBenchmark(int argc, char* argv[]) {
         throw std::invalid_argument("Expected standard, scarcity, or production-cut scenario.");
     if (feasibilityAwareAllocator && (!civilization || experimentalAllocator))
         throw std::invalid_argument("Feasibility-aware allocation requires phase3 and a single allocator.");
+    if (!indexedAid && !feasibilityAwareAllocator)
+        throw std::invalid_argument("Legacy aid search requires feasibility-aware allocation.");
     const auto coefficients = CivilizationObjective::parseWeights(profile);
 
     benchmark::Measurements measurements;
@@ -166,13 +171,17 @@ int runBenchmark(int argc, char* argv[]) {
     CivilizationPlan selected;
     if (civilization) {
         measurements.report("civilization-planning", 0, 0, true);
+        const auto planningStarted = benchmark::Clock::now();
         selected = CivilizationPlanner::choose(std::move(schedule), data.missions, aid,
             data.inventory, data.aidDemands, data.ships, data.graph, data.projects,
             objective, colonies, budget, 30, weights);
+        std::cout << "CIVILIZATION_PLANNING_SECONDS,"
+                  << std::chrono::duration<double>(benchmark::Clock::now() - planningStarted).count() << '\n';
         if (feasibilityAwareAllocator) {
+            measurements.report("aid-coordination", 0, 0, true);
             const auto builds = CivilizationPlanner::constructionEvents(data.projects, selected.construction);
             auto coordinated = CivilizationPlanner::coordinateAid(selected, data.missions, data.inventory,
-                data.aidDemands, data.ships, data.graph, objective, builds, 30, size.missions);
+                data.aidDemands, data.ships, data.graph, objective, builds, 30, size.missions, indexedAid);
             aid = std::move(coordinated.missions);
             allocation = std::move(coordinated.allocation);
             data.missions.insert(data.missions.end(), aid.begin(), aid.end());
@@ -180,6 +189,10 @@ int runBenchmark(int argc, char* argv[]) {
             std::cout << "COORDINATED_AID," << work.attempted << ',' << work.rejected << ',' << work.partial
                       << ',' << work.routeQueries << ',' << work.feasibilityChecks << ',' << work.proposedCargo
                       << ',' << work.committedCargo << ',' << coordinated.retained << '\n';
+            std::cout << "AID_PROFILE," << indexedAid << ',' << work.itineraryBuilds << ','
+                      << work.donorShipCandidates << ',' << work.itinerarySeconds << ',' << work.recoverySeconds
+                      << ',' << work.routeSeconds << ',' << coordinated.coordinationSeconds << ','
+                      << coordinated.replaySeconds << '\n';
         }
         schedule = std::move(selected.schedule);
     }

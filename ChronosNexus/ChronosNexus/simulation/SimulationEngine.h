@@ -76,6 +76,11 @@ struct SimulationResult {
         long long routeQueries = 0;
         long long feasibilityChecks = 0;
         long long partial = 0;
+        long long itineraryBuilds = 0;
+        long long donorShipCandidates = 0;
+        double itinerarySeconds = 0;
+        double recoverySeconds = 0;
+        double routeSeconds = 0;
         double proposedCargo = 0;
         double committedCargo = 0;
     } allocationWork;
@@ -102,7 +107,8 @@ public:
         double minimumHorizon = 0,
         const std::vector<Event>* knownSupplyEvents = nullptr,
         const SimulationObjective* scoring = nullptr,
-        const std::vector<ResourceDemand>* allocationNetwork = nullptr
+        const std::vector<ResourceDemand>* allocationNetwork = nullptr,
+        bool indexedAid = true
     );
 };
 

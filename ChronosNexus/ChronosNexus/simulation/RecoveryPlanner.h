@@ -14,6 +14,7 @@ struct ShipPlan {
     Spacecraft state; // State after any confirmed in-flight delivery.
     std::vector<Booking> pending;
 };
+std::optional<Spacecraft> projectTail(ShipPlan& plan, const GalaxyGraph& graph, double now);
 
 struct SupplySearch {
     double horizon;
@@ -23,6 +24,7 @@ struct SupplySearch {
     bool considerOperatingCost = false;
     long long routeQueries = 0;
     long long feasibilityChecks = 0;
+    double routeSeconds = 0;
 };
 
 std::optional<ScheduledMission> findAssignment(const Mission& mission,

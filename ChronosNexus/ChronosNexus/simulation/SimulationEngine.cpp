@@ -59,7 +59,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
     const std::vector<Spacecraft>& spacecraft, const SchedulingResult& schedule,
     const std::vector<Event>& events, const std::function<void(size_t)>& progress,
     bool recheckAllDepartures, double minimumHorizon, const std::vector<Event>* knownSupplyEvents,
-    const SimulationObjective* scoring, const std::vector<ResourceDemand>* allocationNetwork) {
+    const SimulationObjective* scoring, const std::vector<ResourceDemand>* allocationNetwork, bool indexedAid) {
     SimulationResult result;
     result.scheduled = static_cast<int>(schedule.scheduled.size());
     GalaxyGraph active = galaxy;
@@ -172,18 +172,10 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             addBooking(index, false);
         return inventory;
     };
-    auto findReplacement = [&](const Mission& mission, const ScheduledMission* previous,
-        const std::set<size_t>& held = {}, recovery::SupplySearch* supply = nullptr,
-        const InventoryReservations* forecastInventory = nullptr, bool reconsiderRisk = false) {
-        const std::set<Key> keys{{mission.origin, mission.cargoType}, {mission.destination, mission.cargoType}};
-        for (const auto& [location, type] : keys) {
-            const auto row = balances.find(location);
-            if (row == balances.end() || !row->second.contains(type))
-                return std::optional<ScheduledMission>{};
-        }
-        auto inventory = forecastInventory
-            ? forecastInventory->subset({{mission.origin, mission.cargoType}, {mission.destination, mission.cargoType}})
-            : inventoryFor(keys, held, &mission);
+    // Planning-only index. The graph and clock do not change during this transaction.
+    std::unordered_map<int, std::map<size_t, Spacecraft>> tailsByLocation;
+    std::unordered_map<int, size_t> shipOrdinal;
+    auto collectPlans = [&] {
         std::vector<recovery::ShipPlan> plans;
         std::unordered_map<int, size_t> byShip;
         for (const auto& [id, current] : ships) {
@@ -200,8 +192,45 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             if (const auto ship = byShip.find(entry.spacecraftId); ship != byShip.end())
                 plans[ship->second].pending.push_back({missionById.at(entry.missionId), &entry});
         }
-        return recovery::findAssignment(mission, previous, active, plans, inventory, now,
+        return plans;
+    };
+    auto findReplacement = [&](const Mission& mission, const ScheduledMission* previous,
+        const std::set<size_t>& held = {}, recovery::SupplySearch* supply = nullptr,
+        const InventoryReservations* forecastInventory = nullptr, bool reconsiderRisk = false) {
+        const std::set<Key> keys{{mission.origin, mission.cargoType}, {mission.destination, mission.cargoType}};
+        for (const auto& [location, type] : keys) {
+            const auto row = balances.find(location);
+            if (row == balances.end() || !row->second.contains(type))
+                return std::optional<ScheduledMission>{};
+        }
+        auto inventory = forecastInventory
+            ? forecastInventory->subset({{mission.origin, mission.cargoType}, {mission.destination, mission.cargoType}})
+            : inventoryFor(keys, held, &mission);
+        const auto started = std::chrono::steady_clock::now();
+        std::vector<recovery::ShipPlan> plans;
+        if (allocationNetwork && indexedAid) {
+            // A non-loop aid leg cannot precede a fixed booking: that booking
+            // starts at the current location, but the aid leg ends elsewhere.
+            if (const auto location = tailsByLocation.find(mission.origin); location != tailsByLocation.end())
+                for (const auto& [ordinal, tail] : location->second)
+                    plans.push_back({tail, {}});
+        } else {
+            plans = collectPlans();
+            if (allocationNetwork)
+                for (const auto& plan : plans)
+                    if (plan.state.maxCargoCapacity >= supply->minimumCargo && plan.state.speed > 0)
+                        ++result.allocationWork.itineraryBuilds;
+        }
+        const auto ready = std::chrono::steady_clock::now();
+        auto replacement = recovery::findAssignment(mission, previous, active, plans, inventory, now,
             result.nodesExplored, supply, reconsiderRisk);
+        if (allocationNetwork) {
+            result.allocationWork.donorShipCandidates += plans.size();
+            result.allocationWork.itinerarySeconds += std::chrono::duration<double>(ready - started).count();
+            result.allocationWork.recoverySeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - ready).count();
+            result.allocationWork.routeSeconds += supply->routeSeconds;
+        }
+        return replacement;
     };
 
 
@@ -387,6 +416,19 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                     inventory.adjust(job.origin, job.destination, job.cargoType,
                         replacement->departureTime - now, replacement->arrivalTime - now, job.cargoAmount);
                     const auto after = forecast(key);
+                    if (allocationNetwork && indexedAid) {
+                        const auto ordinal = shipOrdinal.at(replacement->spacecraftId);
+                        auto& atDonor = tailsByLocation.at(job.origin);
+                        recovery::ShipPlan update{atDonor.at(ordinal), {{&job, &*replacement}}};
+                        const auto started = std::chrono::steady_clock::now();
+                        const auto tail = recovery::projectTail(update, active, now);
+                        if (!tail)
+                            throw std::logic_error("Accepted aid could not extend its indexed spacecraft itinerary.");
+                        atDonor.erase(ordinal);
+                        tailsByLocation[tail->currentLocation].emplace(ordinal, *tail);
+                        ++result.allocationWork.itineraryBuilds;
+                        result.allocationWork.itinerarySeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+                    }
                     result.preventiveDecisions.push_back({residual, job, replacement, after});
                     residual = after;
                     accepted = true;
@@ -578,6 +620,18 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
     };
 
     if (allocationNetwork) {
+        if (indexedAid) {
+            const auto started = std::chrono::steady_clock::now();
+            auto plans = collectPlans();
+            for (size_t i = 0; i < plans.size(); ++i) {
+                auto& plan = plans[i];
+                shipOrdinal.emplace(plan.state.id, i);
+                if (const auto tail = recovery::projectTail(plan, active, now))
+                    tailsByLocation[tail->currentLocation].emplace(i, *tail);
+                ++result.allocationWork.itineraryBuilds;
+            }
+            result.allocationWork.itinerarySeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        }
         std::set<Key> participants;
         for (const auto& key : accounts)
             if (allocationPriorities.contains(key))

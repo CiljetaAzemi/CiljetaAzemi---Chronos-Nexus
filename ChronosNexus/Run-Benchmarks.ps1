@@ -18,6 +18,7 @@ param(
     [string]$Scenario = 'standard',
     [switch]$CivilizationMetrics,
     [switch]$FeasibilityAwareAllocator,
+    [switch]$LegacyAidSearch,
     [switch]$ExperimentalAllocator,
     [switch]$AllocationMetrics
 )
@@ -71,6 +72,7 @@ foreach ($size in $Sizes) {
             if ($includeCivilization) { $arguments += "--objective=$ObjectiveProfile" }
             if ($Scenario -ne 'standard') { $arguments += "--scenario=$Scenario" }
             if ($FeasibilityAwareAllocator) { $arguments += '--feasibility-aware-allocator' }
+            if ($LegacyAidSearch) { $arguments += '--legacy-aid-search' }
             if ($ExperimentalAllocator) { $arguments += '--experimental-allocator' }
             $process = Start-Process -FilePath $exe -ArgumentList $arguments `
                 -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -WindowStyle Hidden
@@ -193,6 +195,25 @@ foreach ($size in $Sizes) {
                 'allocation_feasibility_checks','tentative_cargo','trial_committed_cargo','aid_candidate_retained')
             for ($i = 0; $i -lt $extra.Count; ++$i) {
                 $row[$extra[$i]] = if ($work.Count -eq $extra.Count + 1) { $work[$i + 1] } else {'NA'}
+            }
+            $profile = ($lines | Where-Object { $_ -like 'AID_PROFILE,*' } | Select-Object -Last 1) -split ','
+            $names = @('indexed_aid','itinerary_builds','ship_candidates','itinerary_setup_seconds',
+                'recovery_seconds','aid_route_seconds','coordination_seconds','aid_replay_seconds')
+            for ($i = 0; $i -lt $names.Count; ++$i) {
+                $row[$names[$i]] = if ($profile.Count -eq $names.Count + 1) { $profile[$i + 1] } else {'NA'}
+            }
+            $planning = ($lines | Where-Object { $_ -like 'CIVILIZATION_PLANNING_SECONDS,*' } | Select-Object -Last 1) -split ','
+            $row['civilization_planning_seconds'] = if ($planning.Count -eq 2) { $planning[1] } else {'NA'}
+            $at = @{}
+            foreach ($record in $lines | Where-Object { $_ -like 'PROGRESS,*' }) {
+                $parts = $record -split ','
+                if (!$at.ContainsKey($parts[1])) { $at[$parts[1]] = [double]$parts[2] }
+            }
+            foreach ($pair in @('generation,allocation','allocation,scheduling','scheduling,civilization-planning','simulation,complete')) {
+                $from,$to = $pair -split ','
+                $row["stage_${from}_seconds"] = if ($at.ContainsKey($from) -and $at.ContainsKey($to)) {
+                    $at[$to] - $at[$from]
+                } else { 'NA' }
             }
         }
         [pscustomobject]$row | Export-Csv -LiteralPath $csv -Append -NoTypeInformation

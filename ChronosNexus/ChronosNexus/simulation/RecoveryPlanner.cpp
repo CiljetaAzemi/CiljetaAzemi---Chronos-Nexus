@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <numeric>
 #include <tuple>
 
@@ -13,6 +14,29 @@ struct Slot {
     const Booking* next;
 };
 
+void orderBookings(std::vector<Booking>& pending) {
+    std::sort(pending.begin(), pending.end(), [](const Booking& a, const Booking& b) {
+        return std::tie(a.decision->departureTime, a.decision->missionId) <
+            std::tie(b.decision->departureTime, b.decision->missionId);
+    });
+}
+
+bool advanceBooking(Spacecraft& ship, const Booking& booking, const GalaxyGraph& graph, double now) {
+    const auto& entry = *booking.decision;
+    RouteMetrics metrics;
+    double arrival = 0;
+    if (entry.departureTime < now ||
+        !Dijkstra::measure(graph, entry.routeIds, booking.mission->origin,
+            booking.mission->destination, booking.mission->cargoAmount, metrics) ||
+        !MissionScheduler::feasible(*booking.mission, ship, entry.departureTime, metrics, arrival) ||
+        arrival != entry.arrivalTime)
+        return false;
+    ship.currentFuel -= metrics.fuel;
+    ship.currentLocation = booking.mission->destination;
+    ship.availableAt = arrival;
+    return true;
+}
+
 std::vector<Slot> availableSlots(const Mission& mission,
     const GalaxyGraph& graph, std::vector<ShipPlan>& ships, double now) {
     std::vector<Slot> slots;
@@ -21,29 +45,17 @@ std::vector<Slot> availableSlots(const Mission& mission,
         if (ship.maxCargoCapacity < mission.cargoAmount || ship.speed <= 0)
             continue;
         auto& pending = plan.pending;
-        std::sort(pending.begin(), pending.end(), [](const Booking& a, const Booking& b) {
-            return std::tie(a.decision->departureTime, a.decision->missionId) <
-                std::tie(b.decision->departureTime, b.decision->missionId);
-        });
+        orderBookings(pending);
         const size_t firstSlot = slots.size();
         bool validChain = true;
         for (const auto& booking : pending) {
-            const auto& entry = *booking.decision;
-            RouteMetrics metrics;
-            double arrival = 0;
-            if (entry.departureTime < now ||
-                !Dijkstra::measure(graph, entry.routeIds, booking.mission->origin,
-                    booking.mission->destination, booking.mission->cargoAmount, metrics) ||
-                !MissionScheduler::feasible(*booking.mission, ship, entry.departureTime, metrics, arrival) ||
-                arrival != entry.arrivalTime) {
+            const bool potentialGap = ship.currentLocation == mission.origin && booking.mission->origin == mission.destination;
+            if (potentialGap)
+                slots.push_back({ship, 0, &booking});
+            if (!advanceBooking(ship, booking, graph, now)) {
                 validChain = false;
                 break;
             }
-            if (ship.currentLocation == mission.origin && booking.mission->origin == mission.destination)
-                slots.push_back({ship, 0, &booking});
-            ship.currentFuel -= metrics.fuel;
-            ship.currentLocation = booking.mission->destination;
-            ship.availableAt = arrival;
         }
         if (!validChain) {
             slots.resize(firstSlot);
@@ -56,6 +68,15 @@ std::vector<Slot> availableSlots(const Mission& mission,
     }
     return slots;
 }
+}
+
+std::optional<Spacecraft> projectTail(ShipPlan& plan, const GalaxyGraph& graph, double now) {
+    auto tail = plan.state;
+    orderBookings(plan.pending);
+    for (const auto& booking : plan.pending)
+        if (!advanceBooking(tail, booking, graph, now))
+            return std::nullopt;
+    return tail;
 }
 
 std::optional<ScheduledMission> findAssignment(const Mission& mission,
@@ -206,7 +227,10 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
         for (const auto& strategy : std::array{weights, RouteWeights{0, 1, 0}, RouteWeights{0, 0, 1}}) {
             if (supply)
                 ++supply->routeQueries;
+            const auto started = supply ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             auto path = Dijkstra::findShortestPath(graph, mission.origin, mission.destination, strategy, cargo);
+            if (supply)
+                supply->routeSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
             nodesExplored += path.nodesExplored;
             if (path.found && std::find(searched.begin(), searched.end(), path.routeIds) == searched.end()) {
                 consider(path);
