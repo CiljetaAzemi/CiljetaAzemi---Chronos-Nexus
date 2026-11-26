@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="285" viewBox="0 0 780 285" font-family="Arial, sans-serif" fill="#182534">
+<rect width="780" height="285" fill="white"/>
+<text x="40" y="34" font-size="22" font-weight="bold">Validated incumbent quality over time</text>
+<text x="40" y="57" font-size="13">Nominal external assignments · 300 s runs · elapsed time on a log scale</text>
+<text x="40" y="89" font-size="15" font-weight="bold">extreme</text>
+<line x1="96" x2="728" y1="221" y2="221" stroke="#e0e5ec"/>
+<text x="83" y="225" text-anchor="end" font-size="11">-1</text>
+<text x="96" y="238" text-anchor="middle" font-size="11">1 s</text>
+<line x1="96" x2="728" y1="190" y2="190" stroke="#e0e5ec"/>
+<text x="83" y="194" text-anchor="end" font-size="11">115</text>
+<text x="254" y="238" text-anchor="middle" font-size="11">4.2 s</text>
+<line x1="96" x2="728" y1="159" y2="159" stroke="#e0e5ec"/>
+<text x="83" y="163" text-anchor="end" font-size="11">231</text>
+<text x="412" y="238" text-anchor="middle" font-size="11">17.3 s</text>
+<line x1="96" x2="728" y1="128" y2="128" stroke="#e0e5ec"/>
+<text x="83" y="132" text-anchor="end" font-size="11">347</text>
+<text x="570" y="238" text-anchor="middle" font-size="11">71.8 s</text>
+<line x1="96" x2="728" y1="97" y2="97" stroke="#e0e5ec"/>
+<text x="83" y="101" text-anchor="end" font-size="11">463</text>
+<text x="728" y="238" text-anchor="middle" font-size="11">298.3 s</text>
+<path d="M 96 220.73 H 193.97 V 220.47 H 292.22 V 220.2 H 344.66 V 219.66 H 383 V 218.59 H 434.07 V 216.46 H 475.78 V 212.18 H 526.95 V 203.63 H 629.54 V 186.53 H 686.84 V 152.32 H 727.76 V 97.27 H 728" fill="none" stroke="#1e63a3" stroke-width="2.5" stroke-dasharray="6 4"/>
+<text x="338" y="89" fill="#1e63a3" font-size="12">legacy</text>
+<path d="M 183.04 220.73 H 279.77 V 220.47 H 370.28 V 220.2 H 423.33 V 219.66 H 462.47 V 218.59 H 657.86 V 186.53 H 698.46 V 152.32 H 727.74 V 104.75 H 727.96" fill="none" stroke="#a74912" stroke-width="2.5" />
+<text x="468" y="89" fill="#a74912" font-size="12">security-priority</text>
+<path d="M 174.87 220.73 H 271.73 V 220.47 H 365.94 V 220.2 H 420.56 V 219.66 H 460.15 V 218.59 H 511.97 V 216.46 H 552.01 V 212.18 H 598.52 V 203.63 H 657.47 V 186.53 H 698.35 V 152.32 H 727.74 V 104.75 H 727.95" fill="none" stroke="#207351" stroke-width="2.5" />
+<text x="598" y="89" fill="#207351" font-size="12">balanced-priority</text>
+<text x="40" y="270" font-size="12">Each step is a published nominal replay. Horizontal endpoints are engine return times.</text>
+</svg>

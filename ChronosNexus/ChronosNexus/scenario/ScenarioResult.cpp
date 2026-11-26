@@ -173,7 +173,7 @@ void writeResult(Input input, std::ostream& destination, PlanningBudget* clock) 
         input.horizon, input.budget, CivilizationObjective::parseWeights(input.objectiveProfile));
     const auto expanded = legacy.expanded(input.objectiveProfile, data.inventory, data.projects,
         data.populationByLocation(), input.horizon);
-    const auto objective = input.securityPriority ? expanded.withSecurityPriority() :
+    const auto objective = input.balancedPriority ? expanded.withBalancedPriority() : input.securityPriority ? expanded.withSecurityPriority() :
         input.expandedObjective ? expanded : legacy;
     std::unordered_set<int> aidIds;
     AnytimePlan anytime;
@@ -341,7 +341,7 @@ void writeResult(Input input, std::ostream& destination, PlanningBudget* clock) 
     };
     Json result{
         {"version", 1}, {"horizon", input.horizon}, {"objective_profile", input.objectiveProfile},
-        {"objective_model", input.securityPriority ? "security-priority" : input.expandedObjective ? "expanded" : "legacy"},
+        {"objective_model", input.balancedPriority ? "balanced-priority" : input.securityPriority ? "security-priority" : input.expandedObjective ? "expanded" : "legacy"},
         {"experimental_allocator", input.experimentalAllocator},
         {"feasibility_aware_allocator", input.feasibilityAwareAllocator},
         {"allocation_work", {{"attempts", coordinated.work.attempted}, {"rejected", coordinated.work.rejected},

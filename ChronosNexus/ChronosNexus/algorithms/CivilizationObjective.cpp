@@ -285,8 +285,28 @@ CivilizationObjective CivilizationObjective::withSecurityPriority() const {
     return copy;
 }
 
+CivilizationObjective CivilizationObjective::withBalancedPriority(int basisPoints) const {
+    if (!model || basisPoints < 1 || basisPoints > 10000)
+        throw std::invalid_argument("Balanced policy requires an expanded objective and 1-10000 basis points.");
+    auto result = withSecurityPriority();
+    result.bandBasisPoints = basisPoints;
+    return result;
+}
+
+std::array<double, 5> CivilizationObjective::balancedKey(const CivilizationMetrics& m) const {
+    const auto band = [&](double loss, double reference) {
+        const double scaled = loss / std::max(1.0, reference) * (10000.0 / bandBasisPoints);
+        return -std::floor(scaled + 1e-9);
+    };
+    return {band(m.populationApplicable ? 1 - m.populationCoverage : 0, 1),
+        band(m.criticalUnserved, criticalConsumptionRef), band(m.criticalEndingShortage, criticalEndingRef),
+        band(1 - m.service, 1), std::round(m.score * 1e9) / 1e9};
+}
+
 bool CivilizationObjective::better(const CivilizationMetrics& candidate,
     const CivilizationMetrics& incumbent) const {
+    if (bandBasisPoints)
+        return balancedKey(candidate) > balancedKey(incumbent);
     if (securityPriority) {
         // Compare fixed-resolution keys so numerical ties remain transitive.
         const auto key = [](const CivilizationMetrics& m) {

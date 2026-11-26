@@ -11,6 +11,7 @@ struct Input {
     double horizon = 30;
     bool expandedObjective = false;
     bool securityPriority = false;
+    bool balancedPriority = false;
     std::string objectiveProfile = "balanced";
     bool experimentalAllocator = false;
     bool feasibilityAwareAllocator = false;

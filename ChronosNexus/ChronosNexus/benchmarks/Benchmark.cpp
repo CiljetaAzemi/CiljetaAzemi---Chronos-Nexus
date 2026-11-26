@@ -66,19 +66,22 @@ int runBenchmark(int argc, char* argv[]) {
         mode != "all-routes" && mode != "greedy-build" &&
         mode != "stress" && mode != "stress-all-routes" && !inventoryMode)
         throw std::invalid_argument("Unknown benchmark mode.");
-    bool trace = false, reportCivilization = civilization;
+    bool trace = false, traceCandidates = false, reportCivilization = civilization;
     bool experimentalAllocator = false;
     bool feasibilityAwareAllocator = false;
     bool indexedAid = true;
     bool reverseAidBounds = false;
     bool expandedObjective = false;
     bool securityPriority = false;
+    int balancedBasisPoints = 0;
     BudgetLimits limits;
     std::string profile = "balanced", scenario = "standard";
     for (int i = 5; i < argc; ++i) {
         const std::string option = argv[i];
         if (option == "--trace-plan")
             trace = true;
+        else if (option == "--trace-candidates")
+            traceCandidates = true;
         else if (option == "--experimental-allocator")
             experimentalAllocator = true;
         else if (option == "--feasibility-aware-allocator")
@@ -87,6 +90,15 @@ int runBenchmark(int argc, char* argv[]) {
             indexedAid = false;
         else if (option == "--reverse-aid-bounds")
             reverseAidBounds = true;
+        else if (option == "--balanced-priority" || option.starts_with("--balanced-priority=")) {
+            const auto value = option == "--balanced-priority" ? std::string("100") : option.substr(20);
+            if (value.empty() || value.size() > 5 || value.find_first_not_of("0123456789") != std::string::npos)
+                throw std::invalid_argument("Expected balanced-priority width in basis points.");
+            balancedBasisPoints = std::stoi(value);
+            if (balancedBasisPoints < 1 || balancedBasisPoints > 10000)
+                throw std::invalid_argument("Balanced-priority width must be 1-10000 basis points.");
+            expandedObjective = true;
+        }
         else if (option == "--expanded-objective" || option == "--security-priority") {
             securityPriority = securityPriority || option == "--security-priority";
             expandedObjective = true;
@@ -121,6 +133,7 @@ int runBenchmark(int argc, char* argv[]) {
               << " input missions\n";
     measurements.report("generation", 0, 0, true);
     auto data = benchmark::generate(size, seed);
+    const double generationSeconds = clock.elapsed();
     if (scenario == "dynamic") {
         Event request;
         request.eventType = EventType::HighPriorityMission;
@@ -162,7 +175,7 @@ int runBenchmark(int argc, char* argv[]) {
     const auto expanded = reportCivilization
         ? legacy.expanded(profile.find(',') == std::string::npos ? profile : "balanced",
             data.inventory, data.projects, data.populationByLocation(), 30) : legacy;
-    const auto objective = securityPriority ? expanded.withSecurityPriority() : expandedObjective ? expanded : legacy;
+    const auto objective = balancedBasisPoints ? expanded.withBalancedPriority(balancedBasisPoints) : securityPriority ? expanded.withSecurityPriority() : expandedObjective ? expanded : legacy;
     std::cout << "Population " << data.population << ", colonies " << data.colonies.size()
               << ", stations " << data.stations.size() << ", spacecraft " << data.ships.size()
               << ", aid locations " << data.aidDemands.size() << ", external events "
@@ -179,6 +192,7 @@ int runBenchmark(int argc, char* argv[]) {
 
     const RouteWeights weights{0.02, 0.03, 0.5, 3.0, 2.0};
     if (limits.enabled()) {
+        std::cout << "INPUT_TIMING," << generationSeconds << ',' << clock.elapsed() << std::endl;
         const auto result = CivilizationPlanner::anytime(data, legacy, expanded, objective, colonies,
             budget, 30, weights, {}, clock, feasibilityAwareAllocator, indexedAid, reverseAidBounds, [&] {
                 auto allocation = ResourceAllocator::allocateWithRoutes(data.aidDemands, data.graph, weights,
@@ -217,6 +231,9 @@ int runBenchmark(int argc, char* argv[]) {
             }
         }
         const auto elapsed = clock.elapsed();
+        const auto& work = result.plan.schedule;
+        std::cout << "ANYTIME_WORK," << work.nodesExplored << ',' << work.candidates << ','
+                  << work.searchArcs << ',' << work.prunedArcs << ',' << work.routeCacheHits << '\n';
         std::cout << "ANYTIME," << result.forecast.has_value() << ',' << result.planningComplete << ','
                   << result.simulation.has_value() << ',' << (result.trace.empty() ? -1 : result.trace.front().seconds)
                   << ',' << result.firstUseful.value_or(-1) << ',' << result.evaluated << ',' << result.accepted
@@ -253,9 +270,25 @@ int runBenchmark(int argc, char* argv[]) {
     if (civilization) {
         measurements.report("civilization-planning", 0, 0, true);
         const auto planningStarted = benchmark::Clock::now();
+        CivilizationPlanner::CandidateObserver observe;
+        if (traceCandidates) {
+            const auto bands = expanded.withBalancedPriority();
+            observe = [&, bands](const auto& candidate, const auto& projects, SimulationResult&& forecast) {
+                const auto a = legacy.evaluate(forecast, projects);
+                const auto b = expanded.evaluate(forecast, projects);
+                std::cout << std::setprecision(15) << "VALIDATED_CANDIDATE," << a.score << ',' << b.score << ','
+                          << b.populationCoverage << ',' << b.criticalUnserved << ',' << b.criticalEndingShortage << ','
+                          << b.service << ',' << forecast.remainingShortage << ',' << forecast.stockoutAmount << ','
+                          << forecast.transportationCost << ',' << forecast.fuel << ',' << forecast.waste << ','
+                          << forecast.risk << ',' << projects.totalCost << ',' << candidate.missionsScheduled;
+                for (double coordinate : bands.balancedKey(b))
+                    std::cout << ',' << coordinate;
+                std::cout << '\n';
+            };
+        }
         selected = CivilizationPlanner::choose(std::move(schedule), data.missions, aid,
             data.inventory, data.aidDemands, data.ships, data.graph, data.projects,
-            objective, colonies, budget, 30, weights);
+            objective, colonies, budget, 30, weights, {}, observe);
         std::cout << "CIVILIZATION_PLANNING_SECONDS,"
                   << std::chrono::duration<double>(benchmark::Clock::now() - planningStarted).count() << '\n';
         if (feasibilityAwareAllocator) {

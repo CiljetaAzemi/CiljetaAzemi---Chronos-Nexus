@@ -2,9 +2,14 @@ param(
     [Parameter(Mandatory)][string]$Executable,
     [Parameter(Mandatory)][string]$OutputDirectory,
     [switch]$Refinement,
-    [ValidateSet('small','medium','large')][string[]]$Sizes = @('small','medium','large')
+    [switch]$BalancedStudy,
+    [ValidateSet('small','medium','large','extreme')][string[]]$Sizes = @('small','medium','large'),
+    [ValidateSet('legacy','security-priority','balanced-priority')][string]$ExtremePolicy,
+    [ValidateSet(60000,120000,300000)][int[]]$ExtremeBudgetsMs = @(60000,120000,300000)
 )
 $ErrorActionPreference = 'Stop'
+if ($BalancedStudy) { $Refinement = $true }
+if ('extreme' -in $Sizes -and !$BalancedStudy) { throw 'Extreme requires -BalancedStudy.' }
 $exe = (Resolve-Path -LiteralPath $Executable).Path
 if (Test-Path -LiteralPath $OutputDirectory) { throw 'Choose a fresh output directory.' }
 $output = (New-Item -ItemType Directory -Path $OutputDirectory).FullName
@@ -19,7 +24,7 @@ $cases = @(
     @('large', 20261120, 'standard',       @(35000, 45000, 45000)),
     @('large', 20261203, 'dynamic',        @(35000, 45000))
 )
-$dimensions = @{small = @(100, 500, 50); medium = @(1000, 10000, 500); large = @(10000, 100000, 5000)}
+$dimensions = @{small = @(100, 500, 50); medium = @(1000, 10000, 500); large = @(10000, 100000, 5000); extreme = @(100000,1000000,50000)}
 if ($Refinement) {
     $cases = @(
         @('small', 20261120, 'standard', @(2500)),
@@ -34,6 +39,17 @@ if ($Refinement) {
         @('medium', 20261206, 'production-cut', @(5000)),
         @('large', 20261120, 'standard', @(35000, 45000)),
         @('large', 20261207, 'dynamic', @(35000, 45000))
+    )
+}
+if ($BalancedStudy) {
+    $cases = @(
+        @('small', 20261130, 'scarcity', @(2500)),
+        @('medium', 20261127, 'scarcity', @(5000)),
+        @('medium', 20261201, 'dynamic', @(5000,5000)),
+        @('small', 20261214, 'standard', @(2500)),
+        @('medium', 20261215, 'production-cut', @(5000)),
+        @('large', 20261216, 'standard', @(35000,45000)),
+        @('extreme', 20261217, 'standard', $ExtremeBudgetsMs)
     )
 }
 $summaryFields = 'feasible','planning_complete','simulation_complete','first_feasible_s','first_nonempty_s',
@@ -61,7 +77,18 @@ foreach ($case in $cases) {
     $size, $seed, $scenario, $budgets = $case
     if ($size -notin $Sizes) { continue }
     $variants = ,@('legacy', $false, $false)
-    if ($Refinement) {
+    if ($BalancedStudy) {
+        if ($size -notin 'large','extreme') { $variants += ,@('expanded',$true,$false) }
+        $variants += ,@('security-priority',$false,$false)
+        $variants += ,@('balanced-priority',$false,$false)
+        if ($size -eq 'medium' -and $scenario -eq 'scarcity') {
+            $variants += ,@('expanded-indexed-aid',$true,$true)
+            $variants += ,@('security-priority-indexed-aid',$false,$true)
+            $variants += ,@('balanced-priority-indexed-aid',$false,$true)
+            $variants += ,@('balanced-priority-25',$false,$true)
+            $variants += ,@('balanced-priority-250',$false,$true)
+        }
+    } elseif ($Refinement) {
         $variants += ,@('expanded', $true, $false)
         $variants += ,@('security-priority', $false, $false)
         if ($scenario -eq 'scarcity' -and $size -eq 'medium') {
@@ -78,6 +105,7 @@ foreach ($case in $cases) {
     }
     foreach ($variant in $variants) {
         $variantName, $expanded, $aid = $variant
+        if ($size -eq 'extreme' -and $ExtremePolicy -and $variantName -ne $ExtremePolicy) { continue }
         $times = if ($variantName -eq 'legacy') { @(0) + $budgets } else { @(0, $budgets[-1]) }
         if ($Refinement -and $size -eq 'large') {
             $times = if ($variantName -eq 'expanded') { @(45000) } else { $budgets }
@@ -86,6 +114,12 @@ foreach ($case in $cases) {
             $times = @(0) + $budgets
         }
         if ($variantName.EndsWith('-profile')) { $times = @($budgets[-1]) }
+        if ($BalancedStudy) {
+            $times = $budgets
+            if ($size -notin 'large','extreme' -and $variantName -notmatch '-(25|250)$') {
+                $times = @(0) + $budgets
+            }
+        }
         foreach ($milliseconds in $times) {
             $run++
             $stem = Join-Path $output ('{0:D2}-{1}-{2}-{3}-{4}' -f $run,$size,$scenario,$variantName,$milliseconds)
@@ -94,9 +128,13 @@ foreach ($case in $cases) {
             if ($variantName.StartsWith('security-priority')) { $argsList += '--security-priority' }
             if ($variantName -eq 'expanded-security-profile') { $argsList += '--objective=security' }
             if ($variantName -eq 'expanded-service-profile') { $argsList += '--objective=service' }
+            if ($variantName.StartsWith('balanced-priority')) {
+                $width = if ($variantName -match '-(25|250)$') { $Matches[1] } else { 100 }
+                $argsList += "--balanced-priority=$width"
+            }
             if ($aid) { $argsList += '--feasibility-aware-allocator', '--reverse-aid-bounds' }
             if ($milliseconds) { $argsList += "--time-budget-ms=$milliseconds", '--memory-budget-mib=1024' }
-            $cap = if ($size -eq 'large') { 50 } else { 15 }
+            $cap = if ($size -eq 'extreme') { $milliseconds / 1000 + 10 } elseif ($size -eq 'large') { 50 } else { 15 }
             $status = 'returned'
             $watch = [Diagnostics.Stopwatch]::StartNew()
             Write-Host "Run $run $size $scenario $variantName $milliseconds ms"
@@ -128,6 +166,10 @@ foreach ($case in $cases) {
             $row['working_set_limit_mib'] = 1024
             $row['external_overshoot_s'] = if ($milliseconds) { [Math]::Max(0.0, $wall - $milliseconds / 1000) } else { 'NA' }
             Add-Fields $row $summaryFields (Read-Record $lines 'ANYTIME')
+            if ($BalancedStudy) {
+                Add-Fields $row @('generation_s','initialized_s') (Read-Record $lines 'INPUT_TIMING')
+                Add-Fields $row @('incumbent_graph_nodes','incumbent_ship_checks','local_arcs','local_pruned_arcs','route_cache_hits') (Read-Record $lines 'ANYTIME_WORK')
+            }
             if ($milliseconds) {
                 Add-Fields $row $metricFields (Read-Record $lines 'ANYTIME_OUTCOME')
                 $samples = @($lines | Where-Object { $_.StartsWith('INCUMBENT,') })
@@ -161,6 +203,15 @@ foreach ($case in $cases) {
                 }
                 $row['unscheduled_external'] = if ($details) { $details[5] } else { 'NA' }
                 $row['final_nominal_scheduled'] = if ($result) { $result[1] } else { 'NA' }
+            }
+            if ($BalancedStudy) {
+                $row['assigned_external'] = 'NA'
+                $row['assigned_external_pct'] = 'NA'
+                if ($row['feasible'] -eq '1' -and $row['unscheduled_external'] -ne 'NA') {
+                    $assigned = $row['input_missions'] - [int]$row['unscheduled_external']
+                    $row['assigned_external'] = $assigned
+                    $row['assigned_external_pct'] = 100.0 * $assigned / $row['input_missions']
+                }
             }
             [pscustomobject]$row | Export-Csv -NoTypeInformation -Append (Join-Path $output 'anytime.csv')
             if ($status -eq 'failed') { Write-Warning (Get-Content -LiteralPath "$stem.stderr.txt" -Raw) }

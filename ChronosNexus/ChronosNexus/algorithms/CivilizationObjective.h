@@ -48,6 +48,8 @@ public:
     bool usesExpanded() const { return static_cast<bool>(model); }
     bool prioritizesSecurity() const { return securityPriority; }
     CivilizationObjective withSecurityPriority() const;
+    CivilizationObjective withBalancedPriority(int basisPoints = 100) const;
+    std::array<double, 5> balancedKey(const CivilizationMetrics& metrics) const;
     bool better(const CivilizationMetrics& candidate, const CivilizationMetrics& incumbent) const;
     double developmentPreference(const Infrastructure& project) const;
 
@@ -61,6 +63,7 @@ private:
     struct ExpandedModel;
     std::shared_ptr<const ExpandedModel> model;
     bool securityPriority = false;
+    int bandBasisPoints = 0;
     CivilizationMetrics evaluateExpanded(const SimulationResult& actual,
         const InfrastructureOptimizationResult& construction, CivilizationMetrics metrics) const;
 };

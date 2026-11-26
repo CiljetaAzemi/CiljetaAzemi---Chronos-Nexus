@@ -8,6 +8,38 @@
 namespace regression {
 void testCivilization() {
     {
+        const CivilizationObjective legacy({}, {}, {}, {}, 30, 0,
+            CivilizationObjective::parseWeights("balanced"));
+        const auto expanded = legacy.expanded("balanced", {}, {}, {}, 30);
+        const auto strict = expanded.withSecurityPriority();
+        const auto balanced = expanded.withBalancedPriority();
+        CivilizationMetrics cheap{}, tiny{}, substantial{}, dominated{};
+        cheap.populationApplicable = tiny.populationApplicable =
+            substantial.populationApplicable = dominated.populationApplicable = true;
+        cheap.populationCoverage = dominated.populationCoverage = .981;
+        tiny.populationCoverage = .982;
+        substantial.populationCoverage = 1;
+        cheap.service = tiny.service = dominated.service = .50;
+        substantial.service = .30;
+        cheap.score = 75;
+        tiny.score = 60;
+        substantial.score = 61;
+        dominated.score = 70;
+        require(strict.better(tiny, cheap) && balanced.better(cheap, tiny) &&
+            balanced.better(substantial, cheap) && balanced.better(cheap, dominated),
+            "Fixed bands must admit small trade-offs and respect a distinct coverage band.");
+        const std::array outcomes{cheap, tiny, substantial, dominated};
+        for (const auto& a : outcomes)
+            for (const auto& b : outcomes)
+                for (const auto& c : outcomes) {
+                    require(!balanced.better(a, a), "Balanced ties must preserve the incumbent.");
+                    if (balanced.better(a, b) && balanced.better(b, c))
+                        require(balanced.better(a, c), "Balanced comparison must be transitive.");
+                }
+        for (const auto& outcome : outcomes)
+            require(!balanced.better(outcome, substantial), "Enumeration must select the exact banded optimum.");
+    }
+    {
         const auto fixture = makeFlightFixture();
         benchmark::Scenario data;
         data.graph = fixture.graph;
@@ -71,7 +103,8 @@ void testCivilization() {
         }
         {
             PlanningBudget clock({20});
-            const auto result = CivilizationPlanner::anytime(data, legacy, expanded, legacy, {}, 0, 30,
+            const auto balanced = expanded.withBalancedPriority();
+            const auto result = CivilizationPlanner::anytime(data, legacy, expanded, balanced, {}, 0, 30,
                 {}, {}, clock, false, true, false, [&] { clock.requestStop(); PlanningBudget::checkpoint(); return none; });
             require(result.forecast && !result.planningComplete && !result.simulation && result.interrupted == 1 &&
                 std::string_view(clock.exhaustedAt()) == "allocation",

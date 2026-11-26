@@ -243,3 +243,49 @@ All ten Large processes returned a validated plan and completed the event simula
 All 84 processes returned before the external watchdog. The three 100 ms Medium runs are the only runs without complete event simulation. Elapsed engine time stayed within the tested limits. The external wall time includes process launch and reporting and can exceed very short internal budgets.
 
 [Large outcomes](security-priority-large.csv) · [Large incumbent traces](security-priority-large-incumbents.csv)
+
+## Balanced multi-objective study
+
+```powershell
+./ChronosNexus/Compare-BalancedCandidates.ps1 -Executable PATH_TO_RELEASE_X64_EXE -OutputCsv PATH_TO_CANDIDATE_CSV
+./ChronosNexus/Run-Anytime-Study.ps1 -BalancedStudy -Sizes small,medium,large,extreme -Executable PATH_TO_RELEASE_X64_EXE -OutputDirectory PATH_TO_NEW_RESULTS_DIRECTORY
+./ChronosNexus/Plot-AnytimeStudy.ps1 -BalancedStudy -SummaryCsv PATH_TO_ANYTIME_CSV -IncumbentsCsv PATH_TO_INCUMBENTS_CSV -OutputSvg PATH_TO_SVG
+```
+
+The common-pool audit exports validated nominal Phase 3 candidates before any indexed aid pass. Its Pareto labels include coverage, service, critical and total shortages and unmet consumption, transportation, fuel, waste, risk, and construction. The end-to-end study also exercises indexed aid on Medium scarcity. The newer standard and production-cut seeds are held out from tolerance selection. Extreme is a preliminary standard synthetic case with an external watchdog, a sampled 1,024 MiB threshold, and 60, 120 and 300 second internal budgets. The initialization timestamp includes generation, objective setup, and preliminary reporting. Search counters describe the retained schedule only. A global search-space reduction percentage requires a comparable unpruned search and is unavailable.
+
+### Common validated candidate pool
+
+Medium scarcity yielded six candidates, five nondominated on the recorded coordinates. The banded selector chose candidate 2 and strict priority and the reference constraint chose candidate 5. Both had 170 units of critical ending shortage. Candidate 2 had higher service and no construction expenditure, while candidate 5 had higher coverage, lower fuel, and lower total unmet consumption. Indexed aid was excluded from this common pool. Medium urgent events yielded six nondominated candidates. Strict, banded, constrained and legacy selection chose candidate 3. The lowest-fuel nonempty candidate used 3.02% less fuel, with lower coverage and timely service. No cheaper candidate met the exact reference constraints. The observed alternatives do not establish that a cheaper joint allocation or route is impossible. [Candidate pool and Pareto labels](balanced-candidates.csv)
+
+### End-to-end Medium trade-offs
+
+| Case and policy | Completed | Critical ending / unmet | Total unmet | Timely service | Fuel |
+|---|---:|---:|---:|---:|---:|
+| Scarcity, expanded indexed, unbudgeted | 50 | 350 / 30 | 1,664.07 | 6.05% | 1,966.92 |
+| Scarcity, strict indexed, unbudgeted | 67 | 0 / 0 | 1,435.07 | 5.81% | 3,579.82 |
+| Scarcity, banded indexed, unbudgeted | 67 | 0 / 0 | 1,620.07 | 6.05% | 3,523.64 |
+| Urgent events, expanded, 5 s | 208 | 200 / 0 | 1,213.00 | 34.94% | 9,034.21 |
+| Urgent events, strict or banded, 5 s | 256 | 150 / 0 | 145.72 | 36.10% | 10,974.48 |
+
+All three indexed band widths returned the same scarcity outcome at 5 s. Against strict indexed aid, the balanced policy saved 1.57% fuel and 3.43% transport, selected zero rather than five projects, preserved both critical outcomes and all 17 additional completions, and retained about 19% of the strict reduction in total unmet consumption against the unbudgeted expanded reference. The coverage improvement retained was about 11%. No cheaper equivalent urgent-event plan was found. Strict and balanced urgent-event repeats had identical reported outcomes; engine times were 0.414–0.451 s and 0.428–0.429 s respectively. These repeats do not isolate comparator overhead.
+
+The held-out Small standard case tied strict priority on coverage, completions, unmet demand, and fuel. On held-out Medium production cut, the balanced and strict policies each completed 248 missions and left 150 critical units short. Balanced planning left 341 units of total unmet consumption versus 293.5 under strict priority, with slightly higher fuel use. These regressions place limits on adopting the banded policy as a default.
+
+On the held-out Large standard case, all six runs completed event simulation. All three policies stopped during candidate planning at 35 s and finished static planning at 45 s. Both strict and balanced priority completed 2,495 missions with 14 failures and 1,505 units of critical ending shortage. Balanced had no fuel savings and left 2,276.26 units of total unmet consumption versus 1,913.31 under strict priority. The legacy plan completed 2,492 with 15 failures and left 2,034.31 units of total unmet consumption. The 45 s strict and balanced runs took 36.78 and 36.87 s and peaked at 84.81 and 85.21 MiB respectively.
+
+[Small, Medium and Large results](balanced-study.csv) · [Incumbent traces](balanced-incumbents.csv) · [Coverage-versus-time curves](balanced-curves.svg)
+
+### Preliminary Extreme study
+
+The retained observations use one seed and the same 100,000 planets, 1,000,000 routes, 50,000 original missions, and event stream. The 60 and 120 s legacy runs executed sequentially. The strict and balanced observations executed as a concurrent cohort, overlapping part of the 300 s legacy run. The CSV records this execution context. Use `-Sizes extreme -ExtremePolicy POLICY -ExtremeBudgetsMs LIMIT` to reproduce an individual cell. A duplicate strict launch from the sequential batch was stopped once the three legacy rows had been saved. The independent strict cohort supplied the reported rows. Differences in time and assignment counts across execution contexts cannot isolate policy overhead or establish a quality ranking under equal resources.
+
+| Policy | Assigned at 60 s | Assigned at 120 s | Assigned at 300 s | Completed / failed at 300 s |
+|---|---:|---:|---:|---:|
+| Legacy | 73 (0.146%) | 206 (0.412%) | 462 (0.924%) | 460 / 2 |
+| Strict | 8 (0.016%) | 76 (0.152%) | 434 (0.868%) | 432 / 2 |
+| Balanced | 27 (0.054%) | 77 (0.154%) | 434 (0.868%) | 432 / 2 |
+
+All nine retained runs stopped during initial scheduling and completed event simulation of their validated partial plans. Generation took 0.49–1.18 s, initialization finished by 1.27 s, and the first validated nonempty candidate arrived in 2.40–5.20 s. Peak working sets were approximately 743–745 MiB. All retained runs met their time budgets and stayed below the sampled 1,024 MiB threshold. All left 20,000 units of critical ending shortage. Realized essential coverage was 98.876–98.879%, which reflects substantial existing supply alongside minimal mission assignment. At 300 s the balanced and strict plans each consumed 25,843.71 fuel and left 201,535 units of total ending shortage. The retained schedules recorded roughly 139 million graph-node expansions each. Later improvement stages were unreached, so their pruning counters were zero. No comparable unpruned Extreme control was run.
+
+[Extreme outcomes and execution context](balanced-extreme.csv) · [Extreme incumbent traces](balanced-extreme-incumbents.csv) · [Extreme assignments over time](balanced-extreme-curves.svg)

@@ -1,5 +1,7 @@
 # Computational budgets and anytime planning
 
+With `--balanced-priority`, static incumbents improve under a fixed sequence of normalized loss bands and the expanded-score tie-break. Both historical scalar scores can move in either direction when a higher-ranked band improves. No planning-time reference updates are needed. An interrupted candidate is discarded before it can publish. See the [objective formulation](OBJECTIVE.md) for the key and exact reference quantities.
+
 Requirement 18 asks for a solution within a predefined time and memory budget. The competition rules describe a common budget and leave its values and enforcement procedure open. The experimental limits below are project settings.
 
 ## Run the planners

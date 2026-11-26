@@ -2,6 +2,8 @@
 
 The [Civilization Objective audit](ChronosNexus/OBJECTIVE.md) documents the legacy and opt-in expanded models, the professor's objective coverage, and scoring assumptions.
 
+The experimental `--balanced-priority` Phase 3 option compares fixed normalized security and service bands, using the expanded score to break ties. Legacy remains the default.
+
 Enable the experimental security-priority policy with `--security-priority` in Phase 3 or `"objective_model": "security-priority"` in scenario JSON. It compares essential consumption coverage, colony critical shortages, and timely external service before breaking ties with the expanded score. The legacy objective remains the default.
 
 The [computational budget and anytime planner](ChronosNexus/ANYTIME.md) describes the optional time and working-set controls, validated schedule prefixes, and separate forecast and simulation statuses.
