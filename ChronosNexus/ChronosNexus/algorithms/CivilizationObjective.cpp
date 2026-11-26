@@ -210,6 +210,8 @@ CivilizationMetrics CivilizationObjective::evaluateExpanded(const SimulationResu
             resourceWeight += account.priority;
         }
         if (account.demand > 0) {
+            if (essential(account.resource))
+                m.essentialUnserved += outcome.unserved;
             const double missed = fraction(outcome.unserved, account.demand);
             if (account.populationWeight > 0) {
                 populationLoss += account.populationWeight * missed;
@@ -275,4 +277,26 @@ CivilizationMetrics CivilizationObjective::evaluateExpanded(const SimulationResu
         }
     m.score = 100 * weighted / m.applicableWeight;
     return m;
+}
+
+CivilizationObjective CivilizationObjective::withSecurityPriority() const {
+    auto copy = *this;
+    copy.securityPriority = true;
+    return copy;
+}
+
+bool CivilizationObjective::better(const CivilizationMetrics& candidate,
+    const CivilizationMetrics& incumbent) const {
+    if (securityPriority) {
+        // Compare fixed-resolution keys so numerical ties remain transitive.
+        const auto key = [](const CivilizationMetrics& m) {
+            const auto quantize = [](double x) {
+                return std::abs(x) < 1e15 ? std::round(x * 1e9) / 1e9 : x;
+            };
+            return std::array{quantize(m.populationCoverage), -quantize(m.criticalUnserved),
+                -quantize(m.criticalEndingShortage), quantize(m.service), quantize(m.score)};
+        };
+        return key(candidate) > key(incumbent);
+    }
+    return candidate.score > incumbent.score + 1e-9;
 }

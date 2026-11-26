@@ -94,11 +94,12 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
         if (!intact(schedule, missions, forecast))
             return;
         ++feasible;
-        const double score = objective.evaluate(forecast, construction).score;
-        if (feasible == 1 || score > best.forecastScore + 1e-9) {
+        const auto metrics = objective.evaluate(forecast, construction);
+        if (feasible == 1 || objective.better(metrics, best.forecastMetrics)) {
             best.schedule = schedule;
             best.construction = construction;
-            best.forecastScore = score;
+            best.forecastScore = metrics.score;
+            best.forecastMetrics = metrics;
         }
         if (observer)
             observer(schedule, construction, std::move(forecast));
@@ -223,7 +224,7 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
     consider(securedSchedule(standard, false), standard);
     consider(securedSchedule(securityBuild, true), securityBuild);
 
-    if (feasible == 0) {
+    if (feasible == 0 || objective.prioritizesSecurity()) {
         SchedulingResult empty;
         for (const auto& m : obligations)
             empty.rejectedMissionIds.push_back(m.id);
@@ -289,10 +290,13 @@ CoordinatedAid CivilizationPlanner::coordinateAid(CivilizationPlan& plan, const 
     });
     if (fullDeliveries) {
         ++plan.feasible;
-        const double score = objective.evaluate(forecast, plan.construction).score;
-        if (score > plan.forecastScore + 1e-9) {
+        const auto metrics = objective.evaluate(forecast, plan.construction);
+        auto incumbent = plan.forecastMetrics;
+        incumbent.score = plan.forecastScore;
+        if (objective.better(metrics, incumbent)) {
             plan.schedule = std::move(candidate);
-            plan.forecastScore = score;
+            plan.forecastScore = metrics.score;
+            plan.forecastMetrics = metrics;
             aid.retained = true;
             return aid;
         }
@@ -317,7 +321,7 @@ AnytimePlan CivilizationPlanner::anytime(const benchmark::Scenario& data, const 
         const double ready = clock.elapsed();
         if (schedule.missionsScheduled > 0 && !result.firstUseful)
             result.firstUseful = ready;
-        if (result.forecast && active.score <= result.plan.forecastScore + 1e-9)
+        if (result.forecast && !objective.better(active, result.plan.forecastMetrics))
             return;
 
         const auto old = legacy.evaluate(replay, construction);
@@ -338,11 +342,12 @@ AnytimePlan CivilizationPlanner::anytime(const benchmark::Scenario& data, const 
         result.plan.schedule = std::move(accepted);
         result.plan.construction = construction;
         result.plan.forecastScore = active.score;
+        result.plan.forecastMetrics = active;
         result.jobs = std::move(committed);
         result.trace.push_back({clock.elapsed(), old.score, next.score, active.service,
             active.criticalEndingShortage, replay.remainingShortage, replay.stockoutAmount,
             replay.transportationCost, replay.fuel, replay.waste, replay.risk,
-            replay.completed, replay.failed, unscheduled});
+            replay.completed, replay.failed, unscheduled, next.populationCoverage, old.criticalUnserved});
         result.forecast = std::move(replay);
         if (result.trace.size() > 1)
             ++result.accepted;

@@ -646,8 +646,8 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                 addProjection(candidate, before, keys, -1);
                 addProjection(candidate, after, keys, 1);
                 if (addLeg(candidate, incumbent, previous, -1) && addLeg(candidate, urgent, *replacement, 1) &&
-                    objective.evaluate(candidate, scoring->construction).score >
-                        objective.evaluate(*common, scoring->construction).score + 1e-9) {
+                    objective.better(objective.evaluate(candidate, scoring->construction),
+                        objective.evaluate(*common, scoring->construction))) {
                     applyRepair(event, Decision::Reason::DisplacedBooking, incumbent, previous, {});
                     return replacement;
                 }

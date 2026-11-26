@@ -9,6 +9,7 @@ struct CivilizationPlan {
     SchedulingResult schedule;
     InfrastructureOptimizationResult construction;
     double forecastScore = 0;
+    CivilizationMetrics forecastMetrics{};
     int evaluated = 0;
     int feasible = 0;
 };
@@ -26,6 +27,7 @@ struct IncumbentSample {
     double seconds, legacyScore, expandedScore, timelyService, criticalShortage;
     double shortage, unserved, transportation, fuel, waste, risk;
     int scheduled, failed, unscheduled;
+    double essentialCoverage, criticalUnserved;
 };
 
 struct AnytimePlan {

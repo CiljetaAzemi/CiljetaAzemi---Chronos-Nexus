@@ -216,3 +216,30 @@ All 48 processes returned before the external watchdog. Of the 33 budgeted runs,
 The current unbudgeted Large controls completed in 34.19 s and 35.96 s. These measurements differ from the earlier objective-study timeouts. Every budgeted Large run stopped during candidate planning and completed simulation with the same realized scores and mission counts as its paired control. Large standard published its final incumbent at 22.21–23.08 s. Recorded validation accounted for 0.66–0.79 s across budgeted Large runs. The original-obligation gaps remained substantial, with 3,017 external missions unassigned on Large standard and 2,971 on Large dynamic.
 
 A generous budget reproduced the tested legacy controls' reported outcomes. The expanded model sometimes selected a materially different plan. On Medium dynamic it increased its realized score from 75.904 to 76.074 while completions dropped from 255 to 208 and ending shortage rose from 2,160.68 to 2,313. On Small scarcity the expanded score preferred the empty plan to serving six missions. This reflects the active objective's trade-off between reported stock security, costs, and service. The CSV retains both scores and raw outcomes. Rare wall-time or memory peaks outside these scenarios remain possible.
+
+## Security-priority objective comparison
+
+```powershell
+./ChronosNexus/Run-Anytime-Study.ps1 -Refinement -Executable PATH_TO_RELEASE_X64_EXE -OutputDirectory PATH_TO_NEW_RESULTS_DIRECTORY
+```
+
+The refinement matrix compares both weighted objectives and the lexicographic security-priority policy on matched inputs. Where wall budgets are specified, the incumbent log contains the nominal decision coordinates and the summary reports outcomes only for completed event simulation. Medium scarcity includes indexed aid with reverse bounds. The security and service weight profiles are sensitivity cases. Compare those profiles on raw outcomes because their numerical scores use different weights. Recorded operating cost, fuel, waste and risk remain separate from measured computation.
+
+At the 2.5 s Small and 5 s Medium budgets, security priority improved realized essential coverage and total unserved consumption over expanded weighted planning on all ten matched cases. It lowered total ending shortage on nine. The exception was Small scarcity seed `20261130`, where it served six missions and lowered critical shortage from 35 to 15, while total ending shortage rose from 491 to 527.7. Against the matched legacy controls, coverage improved in six cases and tied in four. Total ending shortage rose in two cases. The unseen Small dynamic case completed 20 missions versus 18 for legacy, with higher fuel use and 33 more units of ending shortage.
+
+| Matched case | Policy | Completed / failed | Critical ending / critical unserved | Total ending / total unserved | Fuel |
+|---|---|---:|---:|---:|---:|
+| Medium scarcity, indexed aid, unbudgeted | Expanded | 50 / 0 | 350 / 30 | 5,600.93 / 1,664.07 | 1,966.92 |
+| Medium scarcity, indexed aid, unbudgeted | Security priority | 67 / 0 | 0 / 0 | 5,177.53 / 1,435.07 | 3,579.82 |
+| Medium urgent events, 5 s | Expanded | 208 / 2 | 200 / 0 | 2,313 / 1,213 | 9,034.21 |
+| Medium urgent events, 5 s | Security priority | 256 / 2 | 150 / 0 | 1,879.86 / 145.72 | 10,974.48 |
+
+In Medium scarcity, the security weighted profile selected the empty plan, while the service weighted profile completed 50 missions. Both left 350 units of critical ending shortage. On Medium urgent events those profiles completed 64 and 208 missions, respectively, and both left 200 critical units. This sensitivity supports reporting the raw service and security measures. The 100 ms runs on that case returned validated partial plans and no completed event simulation. For the first 5 s security-priority repeat, the nominal trace first validated a nonempty schedule by 44 ms, reached 64 assignments by 145 ms, and reached 257 by 566 ms. Essential coverage rose from 98.97% to 99.85%, and critical ending shortage fell from 200 to 150 along that trace.
+
+[Small and Medium outcomes](security-priority-small-medium.csv) · [Small and Medium incumbent traces](security-priority-small-medium-incumbents.csv)
+
+All ten Large processes returned a validated plan and completed the event simulation. Each hit its internal planning cutoff during scheduling with aid. The tested policies returned the same realized outcomes per input at 35 s and 45 s. Standard completed 1,953 missions with nine failures, while the unseen urgent-event case completed 1,956 with 15 failures. Both left 2,000 units of critical ending shortage. No construction was selected before the cutoff. Security-priority runs first validated a nonempty candidate in 0.273–0.397 s, returned in 32.23–42.47 s and peaked at about 85 MiB of working set. This measures the current candidate-generation bottleneck under a shared budget. Later alternatives were unavailable for comparison.
+
+All 84 processes returned before the external watchdog. The three 100 ms Medium runs are the only runs without complete event simulation. Elapsed engine time stayed within the tested limits. The external wall time includes process launch and reporting and can exceed very short internal budgets.
+
+[Large outcomes](security-priority-large.csv) · [Large incumbent traces](security-priority-large-incumbents.csv)

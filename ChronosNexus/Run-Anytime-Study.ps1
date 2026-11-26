@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory)][string]$Executable,
-    [Parameter(Mandatory)][string]$OutputDirectory
+    [Parameter(Mandatory)][string]$OutputDirectory,
+    [switch]$Refinement,
+    [ValidateSet('small','medium','large')][string[]]$Sizes = @('small','medium','large')
 )
 $ErrorActionPreference = 'Stop'
 $exe = (Resolve-Path -LiteralPath $Executable).Path
@@ -18,6 +20,22 @@ $cases = @(
     @('large', 20261203, 'dynamic',        @(35000, 45000))
 )
 $dimensions = @{small = @(100, 500, 50); medium = @(1000, 10000, 500); large = @(10000, 100000, 5000)}
+if ($Refinement) {
+    $cases = @(
+        @('small', 20261120, 'standard', @(2500)),
+        @('medium', 20261120, 'standard', @(5000)),
+        @('small', 20261127, 'scarcity', @(2500)),
+        @('medium', 20261127, 'scarcity', @(5000)),
+        @('small', 20261128, 'production-cut', @(2500)),
+        @('medium', 20261128, 'production-cut', @(5000)),
+        @('small', 20261130, 'scarcity', @(2500)),
+        @('medium', 20261201, 'dynamic', @(100, 5000, 5000)),
+        @('small', 20261205, 'dynamic', @(2500)),
+        @('medium', 20261206, 'production-cut', @(5000)),
+        @('large', 20261120, 'standard', @(35000, 45000)),
+        @('large', 20261207, 'dynamic', @(35000, 45000))
+    )
+}
 $summaryFields = 'feasible','planning_complete','simulation_complete','first_feasible_s','first_nonempty_s',
     'evaluated','improved','interrupted','validation_s','reserve_s','engine_elapsed_s','engine_peak_bytes',
     'exhaustion','exhaustion_stage','engine_overshoot_s'
@@ -25,6 +43,10 @@ $metricFields = 'legacy_score','expanded_score','completed','failed','timely_ser
     'total_shortage','unserved_consumption','transportation_cost','fuel','waste','risk','events_applied'
 $traceFields = 'seconds','legacy_score','expanded_score','scheduled','failed','unscheduled_external',
     'timely_service','critical_shortage','total_shortage','unserved_consumption','transportation_cost','fuel','waste','risk'
+if ($Refinement) {
+    $metricFields += 'essential_coverage','critical_unserved_consumption','delivered','construction_cost','projects','essential_unserved_consumption'
+    $traceFields += 'essential_coverage','critical_unserved_consumption'
+}
 function Add-Fields($Row, $Keys, $Values) {
     for ($i = 0; $i -lt $Keys.Count; ++$i) {
         $Row[$Keys[$i]] = if ($null -ne $Values -and $i -lt $Values.Count) { $Values[$i] } else { 'NA' }
@@ -37,19 +59,41 @@ function Read-Record($Lines, $Kind) {
 $run = 0
 foreach ($case in $cases) {
     $size, $seed, $scenario, $budgets = $case
+    if ($size -notin $Sizes) { continue }
     $variants = ,@('legacy', $false, $false)
-    if ($scenario -eq 'scarcity' -or ($size -eq 'medium' -and $scenario -eq 'dynamic')) {
+    if ($Refinement) {
+        $variants += ,@('expanded', $true, $false)
+        $variants += ,@('security-priority', $false, $false)
+        if ($scenario -eq 'scarcity' -and $size -eq 'medium') {
+            $variants += ,@('expanded-indexed-aid', $true, $true)
+            $variants += ,@('security-priority-indexed-aid', $false, $true)
+        }
+        if ($size -eq 'medium' -and $scenario -in 'scarcity','dynamic') {
+            $variants += ,@('expanded-security-profile', $true, $false)
+            $variants += ,@('expanded-service-profile', $true, $false)
+        }
+    } elseif ($scenario -eq 'scarcity' -or ($size -eq 'medium' -and $scenario -eq 'dynamic')) {
         $variants += ,@('expanded', $true, $false)
         $variants += ,@('expanded-indexed-aid', $true, $true)
     }
     foreach ($variant in $variants) {
         $variantName, $expanded, $aid = $variant
         $times = if ($variantName -eq 'legacy') { @(0) + $budgets } else { @(0, $budgets[-1]) }
+        if ($Refinement -and $size -eq 'large') {
+            $times = if ($variantName -eq 'expanded') { @(45000) } else { $budgets }
+        }
+        if ($Refinement -and $size -ne 'large') {
+            $times = @(0) + $budgets
+        }
+        if ($variantName.EndsWith('-profile')) { $times = @($budgets[-1]) }
         foreach ($milliseconds in $times) {
             $run++
             $stem = Join-Path $output ('{0:D2}-{1}-{2}-{3}-{4}' -f $run,$size,$scenario,$variantName,$milliseconds)
             $argsList = @('--benchmark', $size, "$seed", 'phase3', "--scenario=$scenario")
             if ($expanded) { $argsList += '--expanded-objective' }
+            if ($variantName.StartsWith('security-priority')) { $argsList += '--security-priority' }
+            if ($variantName -eq 'expanded-security-profile') { $argsList += '--objective=security' }
+            if ($variantName -eq 'expanded-service-profile') { $argsList += '--objective=service' }
             if ($aid) { $argsList += '--feasibility-aware-allocator', '--reverse-aid-bounds' }
             if ($milliseconds) { $argsList += "--time-budget-ms=$milliseconds", '--memory-budget-mib=1024' }
             $cap = if ($size -eq 'large') { 50 } else { 15 }
@@ -100,10 +144,12 @@ foreach ($case in $cases) {
                 $result = Read-Record $lines 'RESULT'
                 $civilization = Read-Record $lines 'CIVILIZATION'
                 $pair = Read-Record $lines 'OBJECTIVE_PAIR'
+                $details = Read-Record $lines 'OUTCOME_DETAIL'
                 $metrics = if ($result -and $pair -and $civilization) {
                     @($pair[0], $pair[1], $result[3], $result[4], $civilization[5], $civilization[10],
                         $result[6], $result[7], $result[11], $result[10], $result[8], $result[12], $result[16])
                 }
+                if ($Refinement -and $details -and $metrics) { $metrics += $details[0..4] + $details[6] }
                 Add-Fields $row $metricFields $metrics
                 if ($metrics) {
                     $row['feasible'] = '1'
@@ -113,7 +159,7 @@ foreach ($case in $cases) {
                     $row['engine_peak_bytes'] = @(Read-Record $lines 'MEMORY')[0]
                     $row['evaluated'] = $civilization[12]
                 }
-                $row['unscheduled_external'] = 'NA'
+                $row['unscheduled_external'] = if ($details) { $details[5] } else { 'NA' }
                 $row['final_nominal_scheduled'] = if ($result) { $result[1] } else { 'NA' }
             }
             [pscustomobject]$row | Export-Csv -NoTypeInformation -Append (Join-Path $output 'anytime.csv')

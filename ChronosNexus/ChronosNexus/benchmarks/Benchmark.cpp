@@ -72,6 +72,7 @@ int runBenchmark(int argc, char* argv[]) {
     bool indexedAid = true;
     bool reverseAidBounds = false;
     bool expandedObjective = false;
+    bool securityPriority = false;
     BudgetLimits limits;
     std::string profile = "balanced", scenario = "standard";
     for (int i = 5; i < argc; ++i) {
@@ -86,7 +87,8 @@ int runBenchmark(int argc, char* argv[]) {
             indexedAid = false;
         else if (option == "--reverse-aid-bounds")
             reverseAidBounds = true;
-        else if (option == "--expanded-objective") {
+        else if (option == "--expanded-objective" || option == "--security-priority") {
+            securityPriority = securityPriority || option == "--security-priority";
             expandedObjective = true;
             reportCivilization = true;
         }
@@ -160,7 +162,7 @@ int runBenchmark(int argc, char* argv[]) {
     const auto expanded = reportCivilization
         ? legacy.expanded(profile.find(',') == std::string::npos ? profile : "balanced",
             data.inventory, data.projects, data.populationByLocation(), 30) : legacy;
-    const auto& objective = expandedObjective ? expanded : legacy;
+    const auto objective = securityPriority ? expanded.withSecurityPriority() : expandedObjective ? expanded : legacy;
     std::cout << "Population " << data.population << ", colonies " << data.colonies.size()
               << ", stations " << data.stations.size() << ", spacecraft " << data.ships.size()
               << ", aid locations " << data.aidDemands.size() << ", external events "
@@ -189,7 +191,8 @@ int runBenchmark(int argc, char* argv[]) {
                       << ',' << row.scheduled << ',' << row.failed << ',' << row.unscheduled
                       << ',' << row.timelyService << ',' << row.criticalShortage << ',' << row.shortage
                       << ',' << row.unserved << ',' << row.transportation << ',' << row.fuel
-                      << ',' << row.waste << ',' << row.risk << '\n';
+                      << ',' << row.waste << ',' << row.risk << ',' << row.essentialCoverage
+                      << ',' << row.criticalUnserved << '\n';
         if (result.simulation) {
             const auto& actual = *result.simulation;
             auto old = legacy;
@@ -204,7 +207,9 @@ int runBenchmark(int argc, char* argv[]) {
                       << actual.failed << ',' << (expandedObjective ? b.service : a.service) << ','
                       << a.criticalEndingShortage << ',' << actual.remainingShortage << ',' << actual.stockoutAmount
                       << ',' << actual.transportationCost << ',' << actual.fuel << ',' << actual.waste << ','
-                      << actual.risk << ',' << actual.eventsProcessed << '\n';
+                      << actual.risk << ',' << actual.eventsProcessed << ',' << b.populationCoverage << ','
+                      << a.criticalUnserved << ',' << actual.deliveredAmount << ',' << result.plan.construction.totalCost
+                      << ',' << result.plan.construction.selectedInfrastructureIds.size() << ',' << b.essentialUnserved << '\n';
             if (trace) {
                 AllocationResult used;
                 benchmark::reportResults(result.jobs, size.missions, result.jobs.size() - size.missions,
@@ -358,6 +363,16 @@ int runBenchmark(int argc, char* argv[]) {
         const auto oldScore = realizedLegacy.evaluate(actual, construction);
         const auto newScore = realizedExpanded.evaluate(actual, construction);
         const auto& m = expandedObjective ? newScore : oldScore;
+        std::unordered_set<int> assigned;
+        for (const auto& row : schedule.scheduled)
+            assigned.insert(row.missionId);
+        int unassigned = 0;
+        for (int i = 0; i < size.missions; ++i)
+            unassigned += !assigned.contains(data.missions[i].id);
+        std::cout << std::setprecision(12) << "OUTCOME_DETAIL," << newScore.populationCoverage << ','
+                  << oldScore.criticalUnserved << ',' << actual.deliveredAmount << ',' << construction.totalCost << ','
+                  << construction.selectedInfrastructureIds.size() << ',' << unassigned << ','
+                  << newScore.essentialUnserved << '\n';
         std::cout << std::setprecision(12) << "OBJECTIVE_PAIR," << oldScore.score << ',' << newScore.score << ','
             << newScore.applicableWeight << ',' << newScore.populationCoverage << ',' << newScore.missionLoss << ','
             << newScore.transportPenalty << ',' << newScore.fuelPenalty << ',' << newScore.constructionPenalty << '\n';

@@ -52,4 +52,6 @@ Beyond existing transient workspaces, the planner retains one incumbent, one pre
 
 The scheduler already reuses ship and reservation state between prefix checkpoints. The local improver already checks only affected ship tails and inventory accounts inside a move. Incremental validation across those static moves could reuse unchanged route and inventory results if dependencies and capacity effects were tracked across affected accounts and ship tails. Full replay remains the final feasibility check here. The Large measurements show that replay was a small share of runtime. Avoiding repeated scheduling of the external missions would address a larger observed cost.
 
+With `--security-priority`, monotonicity applies to the lexicographic key in [the objective report](OBJECTIVE.md). Every accepted static incumbent has a strictly larger key than its predecessor. Either historical scalar score may decrease. Logs include essential coverage and critical unserved consumption alongside the existing critical stock and service data, so the key can be reconstructed. Dynamic events may change feasible assignments and activate new obligations after static planning.
+
 [Benchmark methodology, curves, and reproducible measurements](benchmark-results/README.md)

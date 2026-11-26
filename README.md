@@ -2,6 +2,8 @@
 
 The [Civilization Objective audit](ChronosNexus/OBJECTIVE.md) documents the legacy and opt-in expanded models, the professor's objective coverage, and scoring assumptions.
 
+Enable the experimental security-priority policy with `--security-priority` in Phase 3 or `"objective_model": "security-priority"` in scenario JSON. It compares essential consumption coverage, colony critical shortages, and timely external service before breaking ties with the expanded score. The legacy objective remains the default.
+
 The [computational budget and anytime planner](ChronosNexus/ANYTIME.md) describes the optional time and working-set controls, validated schedule prefixes, and separate forecast and simulation statuses.
 
 ## Abstract

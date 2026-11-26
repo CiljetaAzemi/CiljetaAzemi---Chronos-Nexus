@@ -15,12 +15,38 @@ void testCivilization() {
         data.missions = {fixture.first, fixture.second};
         data.inventory = {
             {fixture.first.origin, 100, 0, 1, fixture.first.cargoType, 0, 0, 100},
-            {fixture.first.destination, 0, 0, 1, fixture.first.cargoType, 0, 0, 100}};
+            {fixture.first.destination, 0, 0, 1, fixture.first.cargoType, 0, 0, 100},
+            {fixture.second.destination, 0, 0, 1, fixture.second.cargoType, 0, 0, 100}};
         const CivilizationObjective legacy(data.inventory, data.missions, {}, {}, 30, 0,
             CivilizationObjective::parseWeights("balanced"));
         const auto expanded = legacy.expanded("balanced", data.inventory, {}, {}, 30);
         const std::vector<Mission> none;
         auto noAid = [&] { return none; };
+        {
+            const auto policy = expanded.withSecurityPriority();
+            const InventoryPlanningInput input{data.inventory, {}, none};
+            CivilizationMetrics exact{};
+            bool first = true;
+            // The sole spacecraft starts at the first source. The only feasible
+            // mission sequences are empty, first, and first followed by second.
+            for (const auto& sequence : {none, std::vector{fixture.first}, data.missions}) {
+                const auto schedule = MissionScheduler::schedule(sequence, data.ships, data.graph, {},
+                    false, {}, &input, true);
+                const auto simulated = SimulationEngine::run(data.graph, data.inventory, data.missions, data.ships,
+                    schedule, {}, {}, false, 30);
+                require(static_cast<size_t>(simulated.completed) == sequence.size(), "The enumerated sequence must be feasible.");
+                const auto metrics = expanded.evaluate(simulated, {});
+                if (first || policy.better(metrics, exact))
+                    exact = metrics;
+                first = false;
+            }
+            PlanningBudget clock({20});
+            const auto result = CivilizationPlanner::anytime(data, legacy, expanded, policy, {}, 0, 30,
+                {}, {}, clock, false, true, false, noAid);
+            require(result.forecast && result.plan.schedule.missionsScheduled == 2 && exact.service == 1 &&
+                !policy.better(exact, result.plan.forecastMetrics) && !policy.better(result.plan.forecastMetrics, exact),
+                "Anytime planning must reach the exact security-priority key on the two-mission chain.");
+        }
         {
             PlanningBudget clock({20});
             const auto result = CivilizationPlanner::anytime(data, legacy, expanded, legacy, {}, 0, 30,
@@ -94,6 +120,28 @@ void testCivilization() {
         require(securityProfile.evaluate(caseA, {}).score > securityProfile.evaluate(caseB, {}).score &&
             serviceProfile.evaluate(caseB, {}).score > serviceProfile.evaluate(caseA, {}).score,
             "Coverage and timely fulfillment must trade off differently under the two profiles.");
+        const auto policy = expanded.withSecurityPriority();
+        auto emergency = caseA;
+        emergency.resourceOutcomes[2][ResourceType::Food].unserved = 0;
+        emergency.fuel = emergency.transportationCost = 10000;
+        auto expensiveTie = emergency;
+        expensiveTie.fuel *= 2;
+        const std::array candidates{expanded.evaluate(caseA, {}), expanded.evaluate(caseB, {}),
+            expanded.evaluate(expensiveTie, {}), expanded.evaluate(emergency, {})};
+        size_t winner = 0;
+        for (size_t i = 1; i < candidates.size(); ++i)
+            if (policy.better(candidates[i], candidates[winner]))
+                winner = i;
+        require(winner == 3 && !policy.better(candidates[2], candidates[3]),
+            "The exact four-outcome comparison must favor essential coverage and eliminate the fuel-dominated tie.");
+        auto empty = caseA;
+        empty.deliveries.clear();
+        auto expensiveService = caseA;
+        expensiveService.fuel = expensiveService.transportationCost = 10000;
+        require(policy.better(expanded.evaluate(expensiveService, {}), expanded.evaluate(empty, {})),
+            "With equal essential coverage and critical security, timely service must beat the empty plan.");
+        require(!policy.better(expanded.evaluate(empty, {}), expanded.evaluate(empty, {})),
+            "Unavoidable shortages must allow a feasible incumbent and exact ties must keep it.");
         caseB = caseA;
         caseB.deliveries.at(8).arrival = 4;
         caseB.deliveries.emplace(300, SimulationResult::Delivery{4, 1});

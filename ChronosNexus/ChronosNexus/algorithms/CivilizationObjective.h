@@ -18,6 +18,7 @@ struct CivilizationMetrics {
     double riskPenalty;
     double criticalEndingShortage;
     double criticalUnserved;
+    double essentialUnserved = 0;
     double populationCoverage = 0;
     double missionLoss = 0;
     double transportPenalty = 0;
@@ -45,6 +46,9 @@ public:
         const std::vector<Infrastructure>& projects, const std::unordered_map<int, int>& population,
         double horizon) const;
     bool usesExpanded() const { return static_cast<bool>(model); }
+    bool prioritizesSecurity() const { return securityPriority; }
+    CivilizationObjective withSecurityPriority() const;
+    bool better(const CivilizationMetrics& candidate, const CivilizationMetrics& incumbent) const;
     double developmentPreference(const Infrastructure& project) const;
 
 private:
@@ -56,6 +60,7 @@ private:
     double largestCargo = 0;
     struct ExpandedModel;
     std::shared_ptr<const ExpandedModel> model;
+    bool securityPriority = false;
     CivilizationMetrics evaluateExpanded(const SimulationResult& actual,
         const InfrastructureOptimizationResult& construction, CivilizationMetrics metrics) const;
 };

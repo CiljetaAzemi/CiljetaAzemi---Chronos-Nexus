@@ -10,6 +10,7 @@ struct Input {
     int budget = 0;
     double horizon = 30;
     bool expandedObjective = false;
+    bool securityPriority = false;
     std::string objectiveProfile = "balanced";
     bool experimentalAllocator = false;
     bool feasibilityAwareAllocator = false;

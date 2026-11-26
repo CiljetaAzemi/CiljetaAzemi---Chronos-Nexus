@@ -96,8 +96,10 @@ Input loadJson(std::istream& source) {
     check(get<int>(root, "version") == 1, "version: expected schema version 1");
     Input input;
     const auto model = optional(root, "objective_model", std::string("legacy"));
-    check(model == "legacy" || model == "expanded", "objective_model must be legacy or expanded");
-    input.expandedObjective = model == "expanded";
+    check(model == "legacy" || model == "expanded" || model == "security-priority",
+        "objective_model must be legacy, expanded, or security-priority");
+    input.expandedObjective = model != "legacy";
+    input.securityPriority = model == "security-priority";
     input.objectiveProfile = optional(root, "objective_profile", std::string("balanced"));
     check(input.objectiveProfile == "balanced" || input.objectiveProfile == "security" ||
         input.objectiveProfile == "service", "objective_profile must be balanced, security, or service");

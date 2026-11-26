@@ -112,6 +112,7 @@ Json expandedScore(const CivilizationMetrics& metrics) {
     result.erase("infrastructure");
     result.erase("operating_penalty");
     result["population_coverage_proxy"] = metrics.populationApplicable ? Json(metrics.populationCoverage) : Json(nullptr);
+    result["essential_unserved_consumption"] = metrics.essentialUnserved;
     result["economic_appraisal"] = metrics.developmentApplicable[0] ? Json(metrics.development[0]) : Json(nullptr);
     result["research_appraisal"] = metrics.developmentApplicable[1] ? Json(metrics.development[1]) : Json(nullptr);
     result["colony_appraisal"] = metrics.developmentApplicable[2] ? Json(metrics.development[2]) : Json(nullptr);
@@ -172,7 +173,8 @@ void writeResult(Input input, std::ostream& destination, PlanningBudget* clock) 
         input.horizon, input.budget, CivilizationObjective::parseWeights(input.objectiveProfile));
     const auto expanded = legacy.expanded(input.objectiveProfile, data.inventory, data.projects,
         data.populationByLocation(), input.horizon);
-    const auto& objective = input.expandedObjective ? expanded : legacy;
+    const auto objective = input.securityPriority ? expanded.withSecurityPriority() :
+        input.expandedObjective ? expanded : legacy;
     std::unordered_set<int> aidIds;
     AnytimePlan anytime;
     CivilizationPlan plan;
@@ -339,7 +341,7 @@ void writeResult(Input input, std::ostream& destination, PlanningBudget* clock) 
     };
     Json result{
         {"version", 1}, {"horizon", input.horizon}, {"objective_profile", input.objectiveProfile},
-        {"objective_model", input.expandedObjective ? "expanded" : "legacy"},
+        {"objective_model", input.securityPriority ? "security-priority" : input.expandedObjective ? "expanded" : "legacy"},
         {"experimental_allocator", input.experimentalAllocator},
         {"feasibility_aware_allocator", input.feasibilityAwareAllocator},
         {"allocation_work", {{"attempts", coordinated.work.attempted}, {"rejected", coordinated.work.rejected},
@@ -360,7 +362,8 @@ void writeResult(Input input, std::ostream& destination, PlanningBudget* clock) 
                 {"unscheduled_external", row.unscheduled}, {"timely_service", row.timelyService},
                 {"critical_shortage", row.criticalShortage}, {"total_shortage", row.shortage},
                 {"unserved_consumption", row.unserved}, {"transportation_cost", row.transportation},
-                {"fuel", row.fuel}, {"waste", row.waste}, {"risk", row.risk}});
+                {"fuel", row.fuel}, {"waste", row.waste}, {"risk", row.risk},
+                {"essential_coverage", row.essentialCoverage}, {"critical_unserved_consumption", row.criticalUnserved}});
         result["anytime"] = {{"feasible", anytime.forecast.has_value()}, {"planning_complete", anytime.planningComplete},
             {"simulation_complete", anytime.simulation.has_value()}, {"reason", clock->reason()},
             {"exhaustion_stage", clock->exhaustedAt()},
