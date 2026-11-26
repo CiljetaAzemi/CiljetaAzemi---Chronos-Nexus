@@ -29,12 +29,20 @@ struct PathResult {
     double totalCost = 0.0;
     std::vector<int> path;
     int nodesExplored = 0;
+    long long edgesExplored = 0;
     std::vector<int> routeIds;
     RouteMetrics metrics;
 };
 
+struct TravelTimeBounds {
+    std::unordered_map<int, double> time;
+    long long nodes = 0;
+    long long edges = 0;
+};
+
 class Dijkstra {
 public:
+    static TravelTimeBounds reverseTimeBounds(const GalaxyGraph& reversed, int receiver);
     static bool usable(const Route& edge, double cargo);
     static double edgeCost(const Route& edge, const RouteWeights& weights);
     static PathResult findShortestPath(

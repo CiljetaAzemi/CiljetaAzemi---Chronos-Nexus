@@ -1,6 +1,7 @@
 #pragma once
 
 #include <unordered_map>
+#include <array>
 #include "Resource.h"
 
 // Types of infrastructure
@@ -41,6 +42,8 @@ public:
     double populationImpact = 0.0;
     double energyImpact = 0.0;
     double strategicValue = 0.0;
+    // Scenario appraisals for incremental economic, research, or colony development.
+    std::array<double, 3> development{};
 
     // Construction progress
     ConstructionStatus status =

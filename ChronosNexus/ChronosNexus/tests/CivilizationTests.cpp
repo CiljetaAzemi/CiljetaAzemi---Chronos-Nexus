@@ -1,9 +1,87 @@
 #include "TestSupport.h"
 #include "../algorithms/CivilizationPlanner.h"
 #include <algorithm>
+#include <cmath>
+#include <iostream>
 
 namespace regression {
 void testCivilization() {
+    {
+        const std::vector<ResourceDemand> accounts{
+            {1, 0, 0, 1, ResourceType::Food, 0, 1},
+            {2, 0, 0, 1, ResourceType::Food, 0, 1},
+            {3, 0, 4, 1, ResourceType::Water, 0, 1}};
+        Mission request;
+        request.id = 8;
+        request.priority = 0;
+        request.cargoAmount = 4;
+        request.deadline = 3;
+        std::vector<Infrastructure> projects(3);
+        for (size_t i = 0; i < projects.size(); ++i) {
+            projects[i].id = static_cast<int>(i);
+            projects[i].locationId = 1;
+            projects[i].constructionCost = 1;
+            projects[i].constructionTime = 1;
+            projects[i].strategicValue = i == 0 ? 10 : 0;
+        }
+        projects[1].development = {2, 3, 0};
+        projects[2].development = {0, 0, 1};
+        const CivilizationObjective legacy(accounts, {request}, projects, {1, 2}, 4, 1,
+            CivilizationObjective::parseWeights("balanced"));
+        const auto expanded = legacy.expanded("balanced", accounts, projects, {{1, 300}, {2, 100}}, 4);
+        SimulationResult caseA;
+        caseA.resourceOutcomes[1][ResourceType::Food] = {0, 0};
+        caseA.resourceOutcomes[2][ResourceType::Food] = {0, 4};
+        caseA.resourceOutcomes[3][ResourceType::Water] = {0, 0};
+        caseA.deliveries.emplace(8, SimulationResult::Delivery{2, 3});
+        const auto half = expanded.evaluate(caseA, {});
+        require(half.populationCoverage == .75 && half.security == 1 && half.service == .5 && half.missionLoss == .5,
+            "Population coverage must weight residents, without duplicating consumption in resource security.");
+        auto caseB = caseA;
+        caseB.resourceOutcomes[1][ResourceType::Food] = {0, 4};
+        caseB.resourceOutcomes[2][ResourceType::Food] = {0, 0};
+        require(expanded.evaluate(caseB, {}).populationCoverage == .25,
+            "An equal stockout at a higher-population location must reduce the coverage proxy.");
+        caseB.deliveries.at(8).amount = 4;
+        const auto securityProfile = legacy.expanded("security", accounts, projects, {{1, 300}, {2, 100}}, 4);
+        const auto serviceProfile = legacy.expanded("service", accounts, projects, {{1, 300}, {2, 100}}, 4);
+        require(securityProfile.evaluate(caseA, {}).score > securityProfile.evaluate(caseB, {}).score &&
+            serviceProfile.evaluate(caseB, {}).score > serviceProfile.evaluate(caseA, {}).score,
+            "Coverage and timely fulfillment must trade off differently under the two profiles.");
+        caseB = caseA;
+        caseB.deliveries.at(8).arrival = 4;
+        caseB.deliveries.emplace(300, SimulationResult::Delivery{4, 1});
+        require(expanded.evaluate(caseB, {}).missionLoss == 1,
+            "Late service and unrelated aid cannot offset an unfulfilled external obligation.");
+        auto dynamic = expanded;
+        auto urgent = request;
+        urgent.id = 9;
+        dynamic.addExternalObligation(urgent);
+        require(dynamic.evaluate(caseA, {}).service == .25, "An unserved external urgent request stays in the denominator.");
+        for (auto member : {&SimulationResult::transportationCost, &SimulationResult::fuel,
+            &SimulationResult::risk, &SimulationResult::waste}) {
+            caseB = caseA;
+            caseB.*member = 10;
+            require(expanded.evaluate(caseB, {}).score < half.score, "Operating harms must each lower the expanded score.");
+        }
+        require(expanded.evaluate(caseA, {{0, 1}, 2, 10}).score == 0, "An over-budget portfolio cannot earn a score.");
+        const auto science = expanded.evaluate(caseA, {{1}, 1, 0});
+        const auto colony = expanded.evaluate(caseA, {{2}, 1, 0});
+        require(science.development[0] == 1 && science.development[1] == 1 && colony.development[2] == 1 &&
+            expanded.evaluate(caseA, {{0}, 1, 10}).score < half.score,
+            "Typed incremental appraisals replace generic strategic value in the expanded score.");
+
+        GalaxyGraph graph;
+        const auto plan = CivilizationPlanner::choose({}, {request}, {}, accounts, {}, {}, graph,
+            projects, expanded, {1, 2}, 1, 4, {});
+        const auto forecast = SimulationEngine::run(graph, accounts, {request}, {}, {}, {}, {}, false, 4);
+        double exact = expanded.evaluate(forecast, {}).score;
+        for (const auto& project : projects)
+            exact = std::max(exact, expanded.evaluate(forecast, {{project.id}, 1, project.strategicValue}).score);
+        require(plan.construction.selectedInfrastructureIds == std::vector<int>{1} &&
+            std::abs(exact - plan.forecastScore) < 1e-10, "Expanded planning must find the exact one-project optimum.");
+        std::cout << "EXPANDED_EXACT," << exact << ',' << exact - plan.forecastScore << '\n';
+    }
     {
         GalaxyGraph network;
         addTestRoute(network, 10, 1, 2, 6, 0, 5);
@@ -43,6 +121,12 @@ void testCivilization() {
         const auto oldAid = CivilizationPlanner::coordinateAid(legacy, input, stock, stock, fleet, network,
             objective, {}, 3, 11, false);
         requireSamePlan(plan.schedule, legacy.schedule);
+        auto bounded = original;
+        const auto boundedAid = CivilizationPlanner::coordinateAid(bounded, input, stock, stock, fleet, network,
+            objective, {}, 3, 11, true, {true, {}});
+        requireSamePlan(plan.schedule, bounded.schedule);
+        require(boundedAid.work.deadlinePruned > 0 && boundedAid.work.routeQueries < aid.work.routeQueries,
+            "The directed time bound must skip impossible donor routes without changing assignments.");
         require(aid.retained == oldAid.retained && aid.allocation.totalDelivered == oldAid.allocation.totalDelivered &&
             plan.forecastScore == legacy.forecastScore,
             "Indexed aid must reproduce legacy assignments, including a future spacecraft.");

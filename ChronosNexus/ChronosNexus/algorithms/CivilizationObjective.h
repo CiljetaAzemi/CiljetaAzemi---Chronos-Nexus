@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include "InfrastructureOptimizer.h"
@@ -17,6 +18,15 @@ struct CivilizationMetrics {
     double riskPenalty;
     double criticalEndingShortage;
     double criticalUnserved;
+    double populationCoverage = 0;
+    double missionLoss = 0;
+    double transportPenalty = 0;
+    double fuelPenalty = 0;
+    double constructionPenalty = 0;
+    double applicableWeight = 0;
+    bool populationApplicable = false;
+    std::array<double, 3> development{};
+    std::array<bool, 3> developmentApplicable{};
 };
 
 class CivilizationObjective {
@@ -31,6 +41,11 @@ public:
     void addExternalObligation(const Mission& mission);
     size_t obligationCount() const { return obligations.size(); }
     bool isCriticalResource(int location, ResourceType resource) const;
+    CivilizationObjective expanded(const std::string& profile, const std::vector<ResourceDemand>& inventory,
+        const std::vector<Infrastructure>& projects, const std::unordered_map<int, int>& population,
+        double horizon) const;
+    bool usesExpanded() const { return static_cast<bool>(model); }
+    double developmentPreference(const Infrastructure& project) const;
 
 private:
     std::vector<Mission> obligations;
@@ -38,4 +53,9 @@ private:
     Weights weights;
     double endingRef = 0, consumptionRef = 0, criticalEndingRef = 0, criticalConsumptionRef = 0;
     double cargoRef = 0, serviceRef = 0, strategicRef = 0, budget = 0;
+    double largestCargo = 0;
+    struct ExpandedModel;
+    std::shared_ptr<const ExpandedModel> model;
+    CivilizationMetrics evaluateExpanded(const SimulationResult& actual,
+        const InfrastructureOptimizationResult& construction, CivilizationMetrics metrics) const;
 };

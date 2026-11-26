@@ -80,6 +80,20 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
     const auto standard = InfrastructureOptimizer::optimize(projects, budget);
     consider(initial, standard);
     consider(initial, {});
+    if (objective.usesExpanded()) {
+        auto appraised = projects;
+        for (auto& project : appraised)
+            project.strategicValue = objective.developmentPreference(project);
+        auto development = InfrastructureOptimizer::optimize(appraised, budget);
+        const std::unordered_set<int> selected(development.selectedInfrastructureIds.begin(),
+            development.selectedInfrastructureIds.end());
+        development.totalStrategicValue = 0;
+        for (const auto& project : projects)
+            if (selected.contains(project.id))
+                development.totalStrategicValue += project.strategicValue;
+        if (!selected.empty() && development.selectedInfrastructureIds != standard.selectedInfrastructureIds)
+            consider(initial, development);
+    }
     if (std::any_of(obligations.begin(), obligations.end(), [](const Mission& mission) { return mission.importance > 0; })) {
         const InventoryPlanningInput priorityInventory{inventory, aidNetwork, aid};
         auto priorityPlan = MissionScheduler::schedule(obligations, ships, graph, weights, false, {}, &priorityInventory);
@@ -95,6 +109,7 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
     // Revalue production where the unassisted forecast shows a deficit.
     auto targeted = projects;
     for (auto& project : targeted) {
+        project.strategicValue = objective.developmentPreference(project);
         const auto b = balances.find({project.locationId, ResourceType::Food});
         const auto impact = project.resourceImpact.find(ResourceType::Food);
         if (b == balances.end() || impact == project.resourceImpact.end())
@@ -194,14 +209,15 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
 CoordinatedAid CivilizationPlanner::coordinateAid(CivilizationPlan& plan, const std::vector<Mission>& obligations,
     const std::vector<ResourceDemand>& accounts, const std::vector<ResourceDemand>& network,
     const std::vector<Spacecraft>& ships, const GalaxyGraph& graph, const CivilizationObjective& objective,
-    const std::vector<Event>& knownSupply, double horizon, int firstAidId, bool indexedAid) {
+    const std::vector<Event>& knownSupply, double horizon, int firstAidId, bool indexedAid,
+    const AidRoutingOptions& aidRouting) {
     CoordinatedAid aid;
     if (network.empty())
         return aid;
     const SimulationObjective scoring{objective, plan.construction};
     auto started = std::chrono::steady_clock::now();
     const auto trial = SimulationEngine::run(graph, accounts, obligations, ships, plan.schedule,
-        {}, {}, false, horizon, &knownSupply, &scoring, &network, indexedAid);
+        {}, {}, false, horizon, &knownSupply, &scoring, &network, indexedAid, aidRouting);
     aid.coordinationSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     aid.work = trial.allocationWork;
     aid.allocation.nodesExplored = trial.nodesExplored;

@@ -70,6 +70,8 @@ int runBenchmark(int argc, char* argv[]) {
     bool experimentalAllocator = false;
     bool feasibilityAwareAllocator = false;
     bool indexedAid = true;
+    bool reverseAidBounds = false;
+    bool expandedObjective = false;
     std::string profile = "balanced", scenario = "standard";
     for (int i = 5; i < argc; ++i) {
         const std::string option = argv[i];
@@ -81,6 +83,12 @@ int runBenchmark(int argc, char* argv[]) {
             feasibilityAwareAllocator = true;
         else if (option == "--legacy-aid-search")
             indexedAid = false;
+        else if (option == "--reverse-aid-bounds")
+            reverseAidBounds = true;
+        else if (option == "--expanded-objective") {
+            expandedObjective = true;
+            reportCivilization = true;
+        }
         else if (option.starts_with("--objective=")) {
             profile = option.substr(12);
             reportCivilization = true;
@@ -95,7 +103,11 @@ int runBenchmark(int argc, char* argv[]) {
         throw std::invalid_argument("Feasibility-aware allocation requires phase3 and a single allocator.");
     if (!indexedAid && !feasibilityAwareAllocator)
         throw std::invalid_argument("Legacy aid search requires feasibility-aware allocation.");
+    if (reverseAidBounds && (!indexedAid || !feasibilityAwareAllocator))
+        throw std::invalid_argument("Reverse aid bounds require indexed feasibility-aware allocation.");
     const auto coefficients = CivilizationObjective::parseWeights(profile);
+    if (expandedObjective && (!civilization || profile.find(',') != std::string::npos))
+        throw std::invalid_argument("Expanded planning requires phase3 and a named objective profile.");
 
     benchmark::Measurements measurements;
     std::cout << "Dataset " << name << ", seed " << seed << ", mode " << mode << ": "
@@ -128,8 +140,12 @@ int runBenchmark(int argc, char* argv[]) {
     std::unordered_set<int> colonies;
     for (const auto& colony : data.colonies)
         colonies.insert(colony.id);
-    const CivilizationObjective objective(data.inventory, data.missions, data.projects,
+    const CivilizationObjective legacy(data.inventory, data.missions, data.projects,
         colonies, 30, budget, coefficients);
+    const auto expanded = reportCivilization
+        ? legacy.expanded(profile.find(',') == std::string::npos ? profile : "balanced",
+            data.inventory, data.projects, data.populationByLocation(), 30) : legacy;
+    const auto& objective = expandedObjective ? expanded : legacy;
     std::cout << "Population " << data.population << ", colonies " << data.colonies.size()
               << ", stations " << data.stations.size() << ", spacecraft " << data.ships.size()
               << ", aid locations " << data.aidDemands.size() << ", external events "
@@ -180,8 +196,27 @@ int runBenchmark(int argc, char* argv[]) {
         if (feasibilityAwareAllocator) {
             measurements.report("aid-coordination", 0, 0, true);
             const auto builds = CivilizationPlanner::constructionEvents(data.projects, selected.construction);
+            const auto coordinationStart = benchmark::Clock::now();
+            auto lastSample = coordinationStart;
+            auto emit = [&](const SimulationResult::AllocationWork& work) {
+                std::cout << "AID_ROUTING," << work.receivers << ',' << work.attempted << ','
+                    << work.deadlinePruned << ',' << work.routeQueries << ',' << work.repeatedQueries << ','
+                    << work.routeNodes << ',' << work.routeEdges << ',' << work.routeSeconds << ','
+                    << work.boundTrees << ',' << work.boundNodes << ',' << work.boundEdges << ','
+                    << work.boundSeconds << ',' << work.feasibilityChecks << ','
+                    << std::chrono::duration<double>(benchmark::Clock::now() - coordinationStart).count()
+                    << std::endl;
+            };
+            const AidRoutingOptions routing{reverseAidBounds, [&](const SimulationResult::AllocationWork& work) {
+                const auto sample = benchmark::Clock::now();
+                if (sample - lastSample >= std::chrono::seconds(1)) {
+                    emit(work);
+                    lastSample = sample;
+                }
+            }};
             auto coordinated = CivilizationPlanner::coordinateAid(selected, data.missions, data.inventory,
-                data.aidDemands, data.ships, data.graph, objective, builds, 30, size.missions, indexedAid);
+                data.aidDemands, data.ships, data.graph, objective, builds, 30, size.missions, indexedAid, routing);
+            emit(coordinated.work);
             aid = std::move(coordinated.missions);
             allocation = std::move(coordinated.allocation);
             data.missions.insert(data.missions.end(), aid.begin(), aid.end());
@@ -254,10 +289,18 @@ int runBenchmark(int argc, char* argv[]) {
         }
     }
     if (reportCivilization) {
-        auto realizedObjective = objective;
-        for (const auto& request : actual.activatedUrgentMissions)
-            realizedObjective.addExternalObligation(request);
-        const auto m = realizedObjective.evaluate(actual, construction);
+        auto realizedLegacy = legacy;
+        auto realizedExpanded = expanded;
+        for (const auto& request : actual.activatedUrgentMissions) {
+            realizedLegacy.addExternalObligation(request);
+            realizedExpanded.addExternalObligation(request);
+        }
+        const auto oldScore = realizedLegacy.evaluate(actual, construction);
+        const auto newScore = realizedExpanded.evaluate(actual, construction);
+        const auto& m = expandedObjective ? newScore : oldScore;
+        std::cout << std::setprecision(12) << "OBJECTIVE_PAIR," << oldScore.score << ',' << newScore.score << ','
+            << newScore.applicableWeight << ',' << newScore.populationCoverage << ',' << newScore.missionLoss << ','
+            << newScore.transportPenalty << ',' << newScore.fuelPenalty << ',' << newScore.constructionPenalty << '\n';
         std::cout << std::setprecision(12) << "CIVILIZATION,"
             << (profile.find(',') == std::string::npos ? profile : "custom-weights") << ',' << scenario << ','
             << m.score << ',' << m.security << ',' << m.criticalSecurity << ',' << m.service << ','

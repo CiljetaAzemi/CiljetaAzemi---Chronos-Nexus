@@ -25,6 +25,11 @@ struct SupplySearch {
     long long routeQueries = 0;
     long long feasibilityChecks = 0;
     double routeSeconds = 0;
+    long long routeNodes = 0;
+    long long routeEdges = 0;
+    bool deadlinePruned = false;
+    std::optional<double> optimisticTime;
+    std::function<void(double, int)> observeQuery;
 };
 
 std::optional<ScheduledMission> findAssignment(const Mission& mission,

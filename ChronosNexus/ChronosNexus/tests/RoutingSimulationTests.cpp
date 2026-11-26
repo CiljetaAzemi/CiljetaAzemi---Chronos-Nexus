@@ -40,6 +40,22 @@ void testRouteUncertainty() {
         path.metrics.time == 9 && std::abs(path.metrics.reliability - 0.6) < 1e-12 &&
         std::abs(path.metrics.risk - 0.3) < 1e-12,
         "Path time bounds and risk must add, and independent edge reliabilities must multiply.");
+    auto connector = route(5, 0, 0, 1);
+    connector.from = 2;
+    connector.to = 4;
+    multiLeg.addRoute(connector);
+    connector.id = 6;
+    std::swap(connector.from, connector.to);
+    multiLeg.addRoute(connector);
+    auto blocked = route(7, 0.5, 0, 1);
+    blocked.to = 3;
+    blocked.isAvailable = false;
+    multiLeg.addRoute(blocked);
+    const auto bounds = Dijkstra::reverseTimeBounds(multiLeg.reversed(), 3);
+    require(bounds.time.at(1) <= 9 && bounds.time.at(1) > 8.99 &&
+        bounds.time.at(4) <= 3 && bounds.time.at(4) > 2.99 &&
+        !Dijkstra::reverseTimeBounds(multiLeg.reversed(), 1).time.contains(3),
+        "Reverse timing must use available directed edges, upper times, and tolerate zero-time cycles.");
 
     auto [unused, mission, other, slow] = makeFlightFixture();
     mission.deadline = 4;

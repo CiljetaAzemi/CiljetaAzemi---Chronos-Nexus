@@ -19,6 +19,9 @@ param(
     [switch]$CivilizationMetrics,
     [switch]$FeasibilityAwareAllocator,
     [switch]$LegacyAidSearch,
+    [switch]$ReverseAidBounds,
+    [switch]$ExpandedObjective,
+    [switch]$ObjectiveMetrics,
     [switch]$ExperimentalAllocator,
     [switch]$AllocationMetrics
 )
@@ -73,6 +76,8 @@ foreach ($size in $Sizes) {
             if ($Scenario -ne 'standard') { $arguments += "--scenario=$Scenario" }
             if ($FeasibilityAwareAllocator) { $arguments += '--feasibility-aware-allocator' }
             if ($LegacyAidSearch) { $arguments += '--legacy-aid-search' }
+            if ($ReverseAidBounds) { $arguments += '--reverse-aid-bounds' }
+            if ($ExpandedObjective) { $arguments += '--expanded-objective' }
             if ($ExperimentalAllocator) { $arguments += '--experimental-allocator' }
             $process = Start-Process -FilePath $exe -ArgumentList $arguments `
                 -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -WindowStyle Hidden
@@ -203,6 +208,13 @@ foreach ($size in $Sizes) {
                 $row[$names[$i]] = if ($profile.Count -eq $names.Count + 1) { $profile[$i + 1] } else {'NA'}
             }
             $planning = ($lines | Where-Object { $_ -like 'CIVILIZATION_PLANNING_SECONDS,*' } | Select-Object -Last 1) -split ','
+            $routeSample = ($lines | Where-Object { $_ -like 'AID_ROUTING,*' } | Select-Object -Last 1) -split ','
+            $routingNames = @('routing_receivers','routing_probes','deadline_pruned','weighted_queries','repeated_queries',
+                'weighted_nodes','weighted_edges','weighted_seconds','reverse_trees','reverse_nodes','reverse_edges',
+                'reverse_seconds','routing_feasibility_checks','routing_sample_seconds')
+            for ($i = 0; $i -lt $routingNames.Count; ++$i) {
+                $row[$routingNames[$i]] = if ($routeSample.Count -eq $routingNames.Count + 1) { $routeSample[$i + 1] } else {'NA'}
+            }
             $row['civilization_planning_seconds'] = if ($planning.Count -eq 2) { $planning[1] } else {'NA'}
             $at = @{}
             foreach ($record in $lines | Where-Object { $_ -like 'PROGRESS,*' }) {
@@ -213,6 +225,16 @@ foreach ($size in $Sizes) {
                 $from,$to = $pair -split ','
                 $row["stage_${from}_seconds"] = if ($at.ContainsKey($from) -and $at.ContainsKey($to)) {
                     $at[$to] - $at[$from]
+                } else { 'NA' }
+            }
+        }
+        if ($ObjectiveMetrics) {
+            $pair = ($lines | Where-Object { $_ -like 'OBJECTIVE_PAIR,*' } | Select-Object -Last 1) -split ','
+            $names = @('legacy_rescore','expanded_rescore','applicable_weight','population_coverage',
+                'mission_loss','transport_penalty','fuel_penalty','construction_penalty')
+            for ($i = 0; $i -lt $names.Count; ++$i) {
+                $row[$names[$i]] = if ($status -eq 'complete' -and $pair.Count -eq $names.Count + 1) {
+                    $pair[$i + 1]
                 } else { 'NA' }
             }
         }

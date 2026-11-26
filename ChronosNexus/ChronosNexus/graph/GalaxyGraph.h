@@ -27,6 +27,7 @@ public:
 
     // Check whether a location exists
     bool hasLocation(int locationId) const;
+    size_t locationCount() const { return adjacencyList.size(); }
     const Route* findRoute(int routeId) const;
     GalaxyGraph reversed() const;
     std::uint64_t revision() const { return routeRevision; }

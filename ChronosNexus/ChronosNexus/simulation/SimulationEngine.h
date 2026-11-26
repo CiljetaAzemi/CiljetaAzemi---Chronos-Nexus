@@ -78,12 +78,26 @@ struct SimulationResult {
         long long partial = 0;
         long long itineraryBuilds = 0;
         long long donorShipCandidates = 0;
+        long long receivers = 0;
+        long long deadlinePruned = 0;
+        long long routeNodes = 0;
+        long long routeEdges = 0;
+        long long repeatedQueries = 0;
+        long long boundTrees = 0;
+        long long boundNodes = 0;
+        long long boundEdges = 0;
+        double boundSeconds = 0;
         double itinerarySeconds = 0;
         double recoverySeconds = 0;
         double routeSeconds = 0;
         double proposedCargo = 0;
         double committedCargo = 0;
     } allocationWork;
+};
+
+struct AidRoutingOptions {
+    bool reverseBounds = false;
+    std::function<void(const SimulationResult::AllocationWork&)> progress;
 };
 
 class CivilizationObjective;
@@ -108,7 +122,8 @@ public:
         const std::vector<Event>* knownSupplyEvents = nullptr,
         const SimulationObjective* scoring = nullptr,
         const std::vector<ResourceDemand>* allocationNetwork = nullptr,
-        bool indexedAid = true
+        bool indexedAid = true,
+        const AidRoutingOptions& aidRouting = {}
     );
 };
 

@@ -159,3 +159,32 @@ The runner uses the same dataset generator, events, balanced objective, 35-secon
 The normal study uses a 35-second wall limit and 1,024 MiB working-set limit, repeating both scarcity fixtures three times. The diagnostic option uses a 120-second wall limit. These limits are experimental. The runner compares the consolidated default, the previous full-ship aid search, and the indexed search in one binary. The SHA-256 field covers assignment, rejection, recovered mission, aid delivery, and civilization-score trace lines. The timing fields distinguish civilization planning, aid coordination, and its nominal replay. Reported route time is included in recovery time. The itinerary counter counts per-probe legacy validations and indexed initial or changed-tail validations. The setup timer includes collection of legacy plans or indexed lookup and maintenance. It excludes legacy booking replay, which is included in recovery time.
 
 All ten completed legacy/indexed pairs matched on decision traces and reported quality. Both aid variants timed out during aid coordination on both Large cases at 35 seconds. The consolidated default completed both. A separate 120-second diagnostic of Large standard seed `20261120` timed out for both the preserved pre-index executable and the indexed executable. The pre-index executable predates the separate aid-stage marker. The indexed executable began aid coordination at 29.53 seconds. [Paired measurements](allocation-performance.csv) · [Diagnostic measurements](allocation-performance-diagnostic.csv)
+
+### Reverse route bounds
+
+```powershell
+./ChronosNexus/Run-Allocation-Performance.ps1 -Executable PATH_TO_RELEASE_X64_EXE -RouteStudy -OutputDirectory PATH_TO_NEW_RESULTS_DIRECTORY
+./ChronosNexus/Run-Allocation-Performance.ps1 -Executable PATH_TO_RELEASE_X64_EXE -RouteStudy -Diagnostic -OutputDirectory PATH_TO_NEW_DIAGNOSTIC_DIRECTORY
+```
+
+This study compares the consolidated default, the indexed allocator, and the indexed allocator with reverse bounds. It repeats both scarcity fixtures three times and uses production-cut seed `20261126` as the unseen case. The runner preserves the last flushed `AID_ROUTING` sample even if the process times out. Its counters are cumulative for completed probes. Edge counts include inspected adjacency entries, including unusable routes. An equivalent query has the same donor, receiver account, exact cargo, and route strategy. The study counts these repeats without adding a weighted route cache. The 120-second budget is a diagnostic limit.
+
+All ten completed aid pairs matched on decision hashes and reported quality. Both aid variants timed out on both Large cases at 35 seconds. In the 120-second Large standard diagnostic, the indexed control timed out and the reverse-bound variant completed in 40.94 seconds. The last indexed sample counted 20,013 weighted searches and over one billion inspected edges, with zero equivalent repeats. The reverse-bound run evaluated the entire aid pass using 2,319 weighted searches and 497 reverse trees. These counts cover different amounts of completed work because the control timed out. [Paired measurements](aid-route-performance.csv) · [Diagnostic measurements](aid-route-diagnostic.csv) · [Large telemetry samples](aid-route-large-telemetry.csv)
+
+## Expanded objective study
+
+```powershell
+./ChronosNexus/Run-Objective-Study.ps1 -Executable PATH_TO_RELEASE_X64_EXE -OutputDirectory PATH_TO_NEW_RESULTS_DIRECTORY
+```
+
+The study compares legacy Phase 3, expanded Phase 3, and expanded Phase 3 with indexed aid and reverse bounds. Limits are 45 seconds wall time and 1,024 MiB working set. The benchmark runner records `legacy_rescore` and `expanded_rescore` for the same realized plan. Compare each column only against the same formula and profile. Storage and runtime retain their usual benchmark definitions. The generated scenarios declare population and consumption but no development appraisals. The exact construction fixture in `--self-test` exercises the appraisal components separately. [Objective model and scope](../OBJECTIVE.md) · [Study measurements](objective-study.csv)
+
+All 18 balanced Small and Medium runs completed with zero execution failures. The balanced expanded planner improved the expanded re-score in all six pairs (+0.57 to +1.49 points) and reduced the legacy re-score in all six. Ending shortage increased in every pair, and timely external fulfillment changed in only one pair, Small scarcity (+0.18 percentage points). This is a preference trade-off under the tested candidate set.
+
+| Medium case | Ending shortage, legacy / expanded / expanded + aid | Fuel, legacy / expanded / expanded + aid | Completions, legacy / expanded / expanded + aid |
+|---|---:|---:|---:|
+| Standard | 1,909.70 / 2,090.00 / 2,276.32 | 10,550.90 / 10,550.90 / 8,771.15 | 238 / 238 / 193 |
+| Scarcity | 5,404.63 / 5,456.93 / 5,600.93 | 3,158.91 / 3,158.91 / 1,966.92 | 68 / 68 / 50 |
+| Production cut | 2,087.50 / 2,224.00 / 2,329.00 | 11,206.30 / 11,206.30 / 9,454.67 | 245 / 245 / 201 |
+
+On Medium scarcity the security and service profiles matched the balanced profile on the reported service, shortage, completion, fuel, cost, waste, and risk outcomes. The exact controlled fixture detected preference-sensitive choices. Each benchmark cell is a single observation, so the study does not estimate timing variance. All three Large runs reached the 45-second limit during scheduling. Complete-plan quality is unavailable for Large. The CSV preserves each timeout and its last recorded stage.

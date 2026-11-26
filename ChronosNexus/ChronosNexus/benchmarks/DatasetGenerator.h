@@ -29,6 +29,15 @@ struct Scenario {
     std::vector<Infrastructure> projects;
     std::vector<Event> events;
     long long population = 0;
+
+    std::unordered_map<int, int> populationByLocation() const {
+        std::unordered_map<int, int> people;
+        for (const auto& planet : planets)
+            people.emplace(planet.id, planet.population);
+        for (const auto& colony : colonies)
+            people.emplace(colony.id, colony.population);
+        return people;
+    }
 };
 
 Size dimensions(const std::string& name);

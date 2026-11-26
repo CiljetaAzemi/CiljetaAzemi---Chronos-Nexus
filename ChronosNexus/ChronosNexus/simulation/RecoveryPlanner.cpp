@@ -89,6 +89,13 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
     const auto slots = availableSlots(smallest, graph, ships, now);
     if (slots.empty())
         return std::nullopt;
+    if (supply && supply->optimisticTime && std::none_of(slots.begin(), slots.end(), [&](const Slot& slot) {
+        return std::isfinite(*supply->optimisticTime) &&
+            std::max(now, slot.ship.availableAt) + *supply->optimisticTime / slot.ship.speed <= mission.deadline;
+    })) {
+        supply->deadlinePruned = true;
+        return std::nullopt;
+    }
     const RouteWeights standard{0.02, 0.03, 0.5, 3.0, 2.0};
     auto weights = previous ? previous->weights : standard;
     if (reconsiderRisk && weights.risk == 0)
@@ -224,13 +231,20 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
         }
     }
     auto search = [&](double cargo) {
+        int strategyId = 0;
         for (const auto& strategy : std::array{weights, RouteWeights{0, 1, 0}, RouteWeights{0, 0, 1}}) {
             if (supply)
                 ++supply->routeQueries;
             const auto started = supply ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             auto path = Dijkstra::findShortestPath(graph, mission.origin, mission.destination, strategy, cargo);
-            if (supply)
+            if (supply) {
                 supply->routeSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+                supply->routeNodes += path.nodesExplored;
+                supply->routeEdges += path.edgesExplored;
+                if (supply->observeQuery)
+                    supply->observeQuery(cargo, strategyId);
+            }
+            ++strategyId;
             nodesExplored += path.nodesExplored;
             if (path.found && std::find(searched.begin(), searched.end(), path.routeIds) == searched.end()) {
                 consider(path);

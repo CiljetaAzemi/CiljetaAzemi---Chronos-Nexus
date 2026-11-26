@@ -59,7 +59,8 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
     const std::vector<Spacecraft>& spacecraft, const SchedulingResult& schedule,
     const std::vector<Event>& events, const std::function<void(size_t)>& progress,
     bool recheckAllDepartures, double minimumHorizon, const std::vector<Event>* knownSupplyEvents,
-    const SimulationObjective* scoring, const std::vector<ResourceDemand>* allocationNetwork, bool indexedAid) {
+    const SimulationObjective* scoring, const std::vector<ResourceDemand>* allocationNetwork, bool indexedAid,
+    const AidRoutingOptions& aidRouting) {
     SimulationResult result;
     result.scheduled = static_cast<int>(schedule.scheduled.size());
     GalaxyGraph active = galaxy;
@@ -268,6 +269,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                 urgentIds.insert(event.urgentMission->id);
     }
     std::map<Key, int> allocationPriorities;
+    std::optional<GalaxyGraph> reverseAidGraph;
     if (allocationNetwork)
         for (const auto& demand : *allocationNetwork)
             allocationPriorities.emplace(Key{demand.planetId, demand.type}, demand.priority);
@@ -333,6 +335,10 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             const auto before = forecast(key);
             if (!needsSupply(before))
                 continue;
+            std::optional<TravelTimeBounds> timeBounds;
+            std::set<std::tuple<int, double, int>> observedQueries;
+            if (allocationNetwork)
+                ++result.allocationWork.receivers;
             auto residual = before;
             bool accepted = false;
             // Every shipment in this batch must beat the original depletion time.
@@ -385,6 +391,28 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                     if (allocationNetwork) {
                         search.requirePrevention = before.depletionTime && *before.depletionTime > now;
                         search.considerOperatingCost = true;
+                        if (aidRouting.progress)
+                            search.observeQuery = [&](double cargo, int strategy) {
+                                if (!observedQueries.emplace(donor, cargo, strategy).second)
+                                    ++result.allocationWork.repeatedQueries;
+                            };
+                        if (indexedAid && aidRouting.reverseBounds && tailsByLocation.contains(donor) &&
+                            !tailsByLocation.at(donor).empty()) {
+                            if (!timeBounds) {
+                                const auto start = std::chrono::steady_clock::now();
+                                if (!reverseAidGraph)
+                                    reverseAidGraph.emplace(active.reversed());
+                                timeBounds.emplace(Dijkstra::reverseTimeBounds(*reverseAidGraph, key.first));
+                                ++result.allocationWork.boundTrees;
+                                result.allocationWork.boundNodes += timeBounds->nodes;
+                                result.allocationWork.boundEdges += timeBounds->edges;
+                                result.allocationWork.boundSeconds += std::chrono::duration<double>(
+                                    std::chrono::steady_clock::now() - start).count();
+                            }
+                            const auto bound = timeBounds->time.find(donor);
+                            search.optimisticTime = bound == timeBounds->time.end()
+                                ? std::numeric_limits<double>::infinity() : bound->second;
+                        }
                     }
                     if (job.cargoAmount < search.minimumCargo)
                         continue;
@@ -396,6 +424,11 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                     if (allocationNetwork) {
                         result.allocationWork.routeQueries += search.routeQueries;
                         result.allocationWork.feasibilityChecks += search.feasibilityChecks;
+                        result.allocationWork.routeNodes += search.routeNodes;
+                        result.allocationWork.routeEdges += search.routeEdges;
+                        result.allocationWork.deadlinePruned += search.deadlinePruned;
+                        if (aidRouting.progress)
+                            aidRouting.progress(result.allocationWork);
                     }
                     // Booking more inbound cargo cannot free a donor slot or create
                     // storage at this recipient. Retire suppliers the search exhausts.

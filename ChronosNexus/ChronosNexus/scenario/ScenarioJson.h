@@ -7,6 +7,8 @@ struct Input {
     benchmark::Scenario data;
     int budget = 0;
     double horizon = 30;
+    bool expandedObjective = false;
+    std::string objectiveProfile = "balanced";
     bool experimentalAllocator = false;
     bool feasibilityAwareAllocator = false;
     std::vector<Event> knownProductionChanges;

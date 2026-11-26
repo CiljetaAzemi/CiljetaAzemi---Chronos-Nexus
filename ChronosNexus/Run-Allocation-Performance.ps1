@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory)][string]$Executable,
     [string]$OutputDirectory = "$PSScriptRoot\benchmark-results\runs\allocation-performance",
-    [switch]$Diagnostic
+    [switch]$Diagnostic,
+    [switch]$RouteStudy
 )
 $ErrorActionPreference = 'Stop'
 if (Test-Path $OutputDirectory) { throw 'Choose a fresh output directory.' }
@@ -12,11 +13,15 @@ $cases = if ($Diagnostic) {
         @{Sizes=@('small'); Seed=20261119; Scenario='scarcity'; Repeat=3},
         @{Sizes=@('medium'); Seed=20261120; Scenario='scarcity'; Repeat=3},
         @{Sizes=@('small','medium','large'); Seed=20261120; Scenario='standard'; Repeat=1},
-        @{Sizes=@('small','medium','large'); Seed=20261125; Scenario='production-cut'; Repeat=1}
+        @{Sizes=@('small','medium','large'); Seed=$(if ($RouteStudy) {20261126} else {20261125}); Scenario='production-cut'; Repeat=1}
     )
 }
 $variants = @('consolidated','legacy-aid','indexed-aid')
 if ($Diagnostic) { $variants = @('legacy-aid','indexed-aid') }
+if ($RouteStudy) {
+    $variants = if ($Diagnostic) { @('indexed-aid','reverse-bounds') }
+        else { @('consolidated','indexed-aid','reverse-bounds') }
+}
 foreach ($case in $cases) {
     for ($sample=1; $sample -le $case.Repeat; ++$sample) {
         $order = if ($sample % 2) { $variants } else { @($variants | Sort-Object -Descending) }
@@ -29,6 +34,7 @@ foreach ($case in $cases) {
             }
             if ($variant -ne 'consolidated') { $params.FeasibilityAwareAllocator = $true }
             if ($variant -eq 'legacy-aid') { $params.LegacyAidSearch = $true }
+            if ($variant -eq 'reverse-bounds') { $params.ReverseAidBounds = $true }
             & "$PSScriptRoot\Run-Benchmarks.ps1" @params
         }
     }

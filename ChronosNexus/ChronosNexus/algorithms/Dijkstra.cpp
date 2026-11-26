@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <queue>
 #include <unordered_map>
 
@@ -74,6 +75,7 @@ PathResult Dijkstra::findNearest(const GalaxyGraph& graph, int start,
             break;
         }
         for (const Route& edge : graph.getRoutes(node)) {
+            ++result.edgesExplored;
             if (!usable(edge, cargo))
                 continue;
             const double next = cost + edgeCost(edge, weights);
@@ -98,6 +100,39 @@ PathResult Dijkstra::findNearest(const GalaxyGraph& graph, int start,
     std::reverse(result.path.begin(), result.path.end());
     std::reverse(result.routeIds.begin(), result.routeIds.end());
     result.found = measure(graph, result.routeIds, start, destination, cargo, result.metrics);
+    return result;
+}
+
+TravelTimeBounds Dijkstra::reverseTimeBounds(const GalaxyGraph& reversed, int receiver) {
+    TravelTimeBounds result;
+    if (!reversed.hasLocation(receiver))
+        return result;
+    using Item = std::pair<double, int>;
+    std::priority_queue<Item, std::vector<Item>, std::greater<Item>> queue;
+    result.time.emplace(receiver, 0);
+    queue.emplace(0, receiver);
+    while (!queue.empty()) {
+        const auto [distance, location] = queue.top();
+        queue.pop();
+        if (distance != result.time.at(location))
+            continue;
+        ++result.nodes;
+        for (const auto& edge : reversed.getRoutes(location)) {
+            ++result.edges;
+            if (!usable(edge, 0))
+                continue;
+            const double next = std::max(distance, std::nextafter(distance + edge.maximumTime(), 0.0));
+            const auto known = result.time.find(edge.to);
+            if (known == result.time.end() || next < known->second) {
+                result.time[edge.to] = next;
+                queue.emplace(next, edge.to);
+            }
+        }
+    }
+    // Weighted paths are simple and their forward sums can round down.
+    const double margin = std::min(1.0, reversed.locationCount() * std::numeric_limits<double>::epsilon());
+    for (auto& [location, time] : result.time)
+        time = std::nextafter(time * (1 - margin), 0.0);
     return result;
 }
 

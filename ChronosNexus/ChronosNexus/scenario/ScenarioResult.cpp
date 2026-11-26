@@ -106,6 +106,22 @@ Json score(const CivilizationMetrics& metrics) {
         {"critical_unserved_consumption", metrics.criticalUnserved}};
 }
 
+Json expandedScore(const CivilizationMetrics& metrics) {
+    auto result = score(metrics);
+    result.erase("infrastructure");
+    result.erase("operating_penalty");
+    result["population_coverage_proxy"] = metrics.populationApplicable ? Json(metrics.populationCoverage) : Json(nullptr);
+    result["economic_appraisal"] = metrics.developmentApplicable[0] ? Json(metrics.development[0]) : Json(nullptr);
+    result["research_appraisal"] = metrics.developmentApplicable[1] ? Json(metrics.development[1]) : Json(nullptr);
+    result["colony_appraisal"] = metrics.developmentApplicable[2] ? Json(metrics.development[2]) : Json(nullptr);
+    result["mission_loss"] = metrics.missionLoss;
+    result["transport_penalty"] = metrics.transportPenalty;
+    result["fuel_penalty"] = metrics.fuelPenalty;
+    result["construction_penalty"] = metrics.constructionPenalty;
+    result["applicable_weight"] = metrics.applicableWeight;
+    return result;
+}
+
 std::vector<Mission> proposeAid(const benchmark::Scenario& data, const RouteWeights& weights,
     double horizon, Json& proposals, bool experimentalAllocator) {
     std::map<ResourceType, std::vector<ResourceDemand>> byResource;
@@ -153,8 +169,11 @@ void writeResult(Input input, std::ostream& destination) {
     std::unordered_set<int> colonies;
     for (const auto& colony : data.colonies)
         colonies.insert(colony.id);
-    const CivilizationObjective objective(data.inventory, data.missions, data.projects, colonies,
-        input.horizon, input.budget, CivilizationObjective::parseWeights("balanced"));
+    const CivilizationObjective legacy(data.inventory, data.missions, data.projects, colonies,
+        input.horizon, input.budget, CivilizationObjective::parseWeights(input.objectiveProfile));
+    const auto expanded = legacy.expanded(input.objectiveProfile, data.inventory, data.projects,
+        data.populationByLocation(), input.horizon);
+    const auto& objective = input.expandedObjective ? expanded : legacy;
     std::unordered_set<int> aidIds;
     for (const auto& mission : aid)
         aidIds.insert(mission.id);
@@ -201,9 +220,16 @@ void writeResult(Input input, std::ostream& destination) {
     const SimulationObjective scoring{objective, construction};
     const auto actual = SimulationEngine::run(data.graph, data.inventory, data.missions, data.ships,
         schedule, data.events, {}, false, input.horizon, &nominalEvents, &scoring);
-    auto realizedObjective = objective;
-    for (const auto& request : actual.activatedUrgentMissions)
-        realizedObjective.addExternalObligation(request);
+    auto realizedLegacy = legacy;
+    auto realizedExpanded = expanded;
+    for (const auto& request : actual.activatedUrgentMissions) {
+        realizedLegacy.addExternalObligation(request);
+        realizedExpanded.addExternalObligation(request);
+    }
+    const auto nominalLegacy = score(legacy.evaluate(forecast, construction));
+    const auto nominalExpanded = expandedScore(expanded.evaluate(forecast, construction));
+    const auto actualLegacy = score(realizedLegacy.evaluate(actual, construction));
+    const auto actualExpanded = expandedScore(realizedExpanded.evaluate(actual, construction));
 
     Json assignments = Json::array();
     for (const auto& row : schedule.scheduled) {
@@ -261,7 +287,8 @@ void writeResult(Input input, std::ostream& destination) {
         {"completed", forecast.completed}, {"failed", forecast.failed},
         {"delivered_amount", forecast.deliveredAmount}, {"remaining_shortage", forecast.remainingShortage},
         {"resources", resourceOutcomes(forecast)}, {"shortage_prediction", shortagePrediction(forecast)},
-        {"civilization", score(objective.evaluate(forecast, construction))}
+        {"civilization", input.expandedObjective ? nominalExpanded : nominalLegacy},
+        {"civilization_legacy", nominalLegacy}, {"civilization_expanded", nominalExpanded}
     };
     const Json planned{
         {"assignments", assignments}, {"rejected_mission_ids", schedule.rejectedMissionIds},
@@ -280,11 +307,13 @@ void writeResult(Input input, std::ostream& destination) {
         {"remaining_shortage", actual.remainingShortage}, {"stockout_amount", actual.stockoutAmount},
         {"missions", outcomes}, {"resources", resourceOutcomes(actual)},
         {"shortage_prediction", shortagePrediction(actual)},
-        {"civilization", score(realizedObjective.evaluate(actual, construction))},
-        {"service_obligations", realizedObjective.obligationCount()}
+        {"civilization", input.expandedObjective ? actualExpanded : actualLegacy},
+        {"civilization_legacy", actualLegacy}, {"civilization_expanded", actualExpanded},
+        {"service_obligations", realizedLegacy.obligationCount()}
     };
     const Json result{
-        {"version", 1}, {"horizon", input.horizon}, {"objective_profile", "balanced"},
+        {"version", 1}, {"horizon", input.horizon}, {"objective_profile", input.objectiveProfile},
+        {"objective_model", input.expandedObjective ? "expanded" : "legacy"},
         {"experimental_allocator", input.experimentalAllocator},
         {"feasibility_aware_allocator", input.feasibilityAwareAllocator},
         {"allocation_work", {{"attempts", coordinated.work.attempted}, {"rejected", coordinated.work.rejected},

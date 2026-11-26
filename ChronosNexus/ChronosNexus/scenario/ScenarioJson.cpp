@@ -95,6 +95,12 @@ Input loadJson(std::istream& source) {
     check(root.is_object(), "Scenario must be a JSON object");
     check(get<int>(root, "version") == 1, "version: expected schema version 1");
     Input input;
+    const auto model = optional(root, "objective_model", std::string("legacy"));
+    check(model == "legacy" || model == "expanded", "objective_model must be legacy or expanded");
+    input.expandedObjective = model == "expanded";
+    input.objectiveProfile = optional(root, "objective_profile", std::string("balanced"));
+    check(input.objectiveProfile == "balanced" || input.objectiveProfile == "security" ||
+        input.objectiveProfile == "service", "objective_profile must be balanced, security, or service");
     input.experimentalAllocator = optional(root, "experimental_allocator", false);
     input.feasibilityAwareAllocator = optional(root, "feasibility_aware_allocator", false);
     check(!input.experimentalAllocator || !input.feasibilityAwareAllocator, "choose only one experimental allocator");
@@ -242,6 +248,8 @@ Input loadJson(std::istream& source) {
         p.constructionCost = get<int>(row, "cost");
         p.constructionTime = time(row, "completion_time");
         p.strategicValue = number(row, "strategic_value");
+        p.development = {number(row, "economic_appraisal", 0), number(row, "research_appraisal", 0),
+            number(row, "colony_appraisal", 0)};
         const double food = number(row, "food_production", 0);
         if (food > 0) {
             check(accounts.contains({p.locationId, ResourceType::Food}), "food production requires a food account");
