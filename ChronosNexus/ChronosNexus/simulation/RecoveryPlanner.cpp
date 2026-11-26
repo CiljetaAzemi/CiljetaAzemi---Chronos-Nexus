@@ -1,4 +1,5 @@
 #include "RecoveryPlanner.h"
+#include "../algorithms/PlanningBudget.h"
 
 #include <algorithm>
 #include <array>
@@ -131,6 +132,7 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
             for (int edge : path.routeIds)
                 routeCargo = std::min(routeCargo, graph.findRoute(edge)->maxCapacity);
         for (const auto& slot : slots) {
+            PlanningBudget::checkpoint();
             const auto& ship = slot.ship;
             if (path.metrics.fuel > slot.unreservedFuel)
                 continue;
@@ -190,6 +192,7 @@ std::optional<ScheduledMission> findAssignment(const Mission& mission,
                         return false;
                     double infeasible = upper;
                     while (infeasible - cargo > smallest.cargoAmount) {
+                        PlanningBudget::checkpoint();
                         const double middle = std::midpoint(cargo, infeasible);
                         if (feasibleAt(departure, middle, arrival))
                             cargo = middle;

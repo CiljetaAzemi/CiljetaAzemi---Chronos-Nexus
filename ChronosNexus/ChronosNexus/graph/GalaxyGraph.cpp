@@ -1,4 +1,5 @@
 #include "GalaxyGraph.h"
+#include "../algorithms/PlanningBudget.h"
 
 #include <cmath>
 #include <atomic>
@@ -46,6 +47,7 @@ GalaxyGraph GalaxyGraph::reversed() const {
     graph.adjacencyList.reserve(adjacencyList.size());
     graph.routeIndex.reserve(routeIndex.size());
     for (const auto& [location, routes] : adjacencyList) {
+        PlanningBudget::checkpoint();
         graph.addLocation(location);
         for (auto edge : routes) {
             std::swap(edge.from, edge.to);

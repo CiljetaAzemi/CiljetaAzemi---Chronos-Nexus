@@ -1,4 +1,5 @@
 
+#include "PlanningBudget.h"
 #include "InfrastructureOptimizer.h"
 
 #include <algorithm>
@@ -21,6 +22,7 @@ InfrastructureOptimizationResult InfrastructureOptimizer::optimize(
     std::unordered_set<int> seenIds;
 
     for (const auto& project : projects) {
+        PlanningBudget::checkpoint();
         if (project.status != ConstructionStatus::Proposed) {
             continue;
         }
@@ -65,11 +67,13 @@ InfrastructureOptimizationResult InfrastructureOptimizer::optimize(
     std::vector<int> bestNode(budget + 1, -1);
 
     for (const Infrastructure* project : candidates) {
+        PlanningBudget::checkpoint();
         const int cost = static_cast<int>(project->constructionCost);
         const double value = project->strategicValue;
 
         // Descending order prevents selecting a project twice.
         for (int b = budget; b >= cost; --b) {
+            PlanningBudget::checkpoint();
             const double newValue = dp[b - cost] + value;
 
             if (newValue > dp[b]) {
@@ -105,6 +109,7 @@ InfrastructureOptimizationResult InfrastructureOptimizer::optimize(
     // Calculate the actual construction cost.
     for (int id : result.selectedInfrastructureIds) {
         for (const auto& project : projects) {
+            PlanningBudget::checkpoint();
             if (project.id == id) {
                 result.totalCost += project.constructionCost;
                 break;

@@ -26,6 +26,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="algorithms\PlanningBudget.cpp"><Filter>algorithms</Filter></ClCompile>
     <ClCompile Include="algorithms\Dijkstra.cpp">
       <Filter>algorithms</Filter>
     </ClCompile>
@@ -113,6 +114,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="algorithms\PlanningBudget.h"><Filter>algorithms</Filter></ClInclude>
     <ClInclude Include="algorithms\Dijkstra.h">
       <Filter>algorithms</Filter>
     </ClInclude>

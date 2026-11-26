@@ -2,6 +2,8 @@
 
 The [Civilization Objective audit](ChronosNexus/OBJECTIVE.md) documents the legacy and opt-in expanded models, the professor's objective coverage, and scoring assumptions.
 
+The [computational budget and anytime planner](ChronosNexus/ANYTIME.md) describes the optional time and working-set controls, validated schedule prefixes, and separate forecast and simulation statuses.
+
 ## Abstract
 
 Chronos Nexus is a C++20 simulation and planning system for allocating resources, scheduling spacecraft, selecting infrastructure, and responding to disruptions in a directed galaxy network. It combines weighted shortest-path search, greedy allocation and scheduling, and budget-constrained dynamic programming. In the recorded Release x64 evaluation, the system completed the small, medium, and large scenarios. The extreme scenario reached the 600-second limit during scheduling. The large run completed 2,150 of 5,502 input and generated aid missions.

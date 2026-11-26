@@ -1,4 +1,5 @@
 #include "PlanImprover.h"
+#include "PlanningBudget.h"
 #include "InventoryReservations.h"
 
 #include <algorithm>
@@ -66,6 +67,7 @@ std::vector<PathResult> constrainedRoutes(const GalaxyGraph& graph, const Missio
     int expanded = 0;
     size_t arcs = 0;
     while (!queue.empty() && expanded < expansionLimit && arcs < arcLimit && result.size() < pathLimit) {
+        PlanningBudget::checkpoint();
         const auto index = queue.top().second;
         queue.pop();
         const auto current = labels[index];
@@ -197,6 +199,7 @@ SchedulingResult PlanImprover::improve(SchedulingResult plan, const std::vector<
         return std::tie(x.deadline, x.id) < std::tie(y.deadline, y.id);
     });
     for (int id : targets) {
+        PlanningBudget::checkpoint();
         incoming[jobs.at(id).destination].push_back(id);
         if (benefitAware)
             outgoing[jobs.at(id).origin].push_back(id);
@@ -250,6 +253,7 @@ SchedulingResult PlanImprover::improve(SchedulingResult plan, const std::vector<
             touch(mission);
         }
         for (const auto& leg : add) {
+            PlanningBudget::checkpoint();
             affected.try_emplace(leg.track, tracks[leg.track].tail);
             touch(jobs.at(leg.mission));
         }
@@ -270,6 +274,7 @@ SchedulingResult PlanImprover::improve(SchedulingResult plan, const std::vector<
         std::vector<ScheduledMission> newLegs;
         std::vector<double> fuelBefore;
         for (const auto& leg : add) {
+            PlanningBudget::checkpoint();
             auto& state = affected.at(leg.track);
             const auto& mission = jobs.at(leg.mission);
             auto routes = constrainedRoutes(graph, mission, state, weights, plan);
@@ -350,6 +355,7 @@ SchedulingResult PlanImprover::improve(SchedulingResult plan, const std::vector<
     };
 
     for (int id : targets) {
+        PlanningBudget::checkpoint();
         if (plan.searchTrials >= activeLimit)
             break;
         if (!pending.contains(id))

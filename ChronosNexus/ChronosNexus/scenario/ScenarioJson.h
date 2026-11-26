@@ -2,6 +2,8 @@
 #include <iosfwd>
 #include "../benchmarks/DatasetGenerator.h"
 
+class PlanningBudget;
+
 namespace scenario {
 struct Input {
     benchmark::Scenario data;
@@ -14,6 +16,6 @@ struct Input {
     std::vector<Event> knownProductionChanges;
 };
 Input loadJson(std::istream& source);
-void writeResult(Input input, std::ostream& destination);
+void writeResult(Input input, std::ostream& destination, PlanningBudget* clock = nullptr);
 int runFile(int argc, char* argv[]);
 }

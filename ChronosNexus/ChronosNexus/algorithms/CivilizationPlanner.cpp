@@ -1,5 +1,7 @@
 #include "CivilizationPlanner.h"
 #include "PlanImprover.h"
+#include "LogisticsPlanner.h"
+#include "../benchmarks/DatasetGenerator.h"
 
 #include <algorithm>
 #include <chrono>
@@ -8,6 +10,33 @@
 #include <map>
 #include <set>
 #include <tuple>
+
+namespace {
+struct ValidationTimer {
+    double* total;
+    PlanningBudget::Clock::time_point start = PlanningBudget::Clock::now();
+    ~ValidationTimer() {
+        if (total)
+            *total += std::chrono::duration<double>(PlanningBudget::Clock::now() - start).count();
+    }
+};
+
+std::vector<Mission> withOrigins(std::vector<Mission> jobs, const SchedulingResult& schedule) {
+    for (auto& mission : jobs)
+        if (const auto src = schedule.revisedOrigins.find(mission.id); src != schedule.revisedOrigins.end())
+            mission.origin = src->second;
+    return jobs;
+}
+
+bool intact(const SchedulingResult& schedule, const std::vector<Mission>& jobs, const SimulationResult& replay) {
+    return replay.completed == schedule.missionsScheduled &&
+        std::none_of(jobs.begin(), jobs.end(), [&](const Mission& job) {
+            const auto delivery = replay.deliveries.find(job.id);
+            return delivery != replay.deliveries.end() &&
+                (delivery->second.arrival > job.deadline || delivery->second.amount + 1e-8 < job.cargoAmount);
+        });
+}
+}
 
 std::vector<Event> CivilizationPlanner::constructionEvents(const std::vector<Infrastructure>& projects,
     const InfrastructureOptimizationResult& construction) {
@@ -38,7 +67,8 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
     const GalaxyGraph& graph, const std::vector<Infrastructure>& projects,
     const CivilizationObjective& objective, const std::unordered_set<int>& colonies,
     int budget, double horizon, const RouteWeights& weights,
-    const std::vector<Event>& knownProductionChanges) {
+    const std::vector<Event>& knownProductionChanges, const CandidateObserver& observer,
+    double* validationSeconds, int* evaluatedCandidates) {
     CivilizationPlan best;
     int evaluated = 0, feasible = 0;
     auto nominalEvents = [&](const InfrastructureOptimizationResult& build) {
@@ -55,18 +85,13 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
     };
     auto consider = [&](const SchedulingResult& schedule, const InfrastructureOptimizationResult& construction) {
         ++evaluated;
-        auto missions = obligations;
-        for (auto& m : missions)
-            if (const auto src = schedule.revisedOrigins.find(m.id); src != schedule.revisedOrigins.end())
-                m.origin = src->second;
-        const auto forecast = SimulationEngine::run(graph, inventory, missions, ships, schedule,
+        if (evaluatedCandidates)
+            ++*evaluatedCandidates;
+        ValidationTimer timer{validationSeconds};
+        const auto missions = withOrigins(obligations, schedule);
+        auto forecast = SimulationEngine::run(graph, inventory, missions, ships, schedule,
             nominalEvents(construction), {}, false, horizon);
-        if (forecast.completed != schedule.missionsScheduled ||
-            std::any_of(missions.begin(), missions.end(), [&](const Mission& m) {
-                const auto d = forecast.deliveries.find(m.id);
-                return d != forecast.deliveries.end() &&
-                    (d->second.arrival > m.deadline || d->second.amount + 1e-8 < m.cargoAmount);
-            }))
+        if (!intact(schedule, missions, forecast))
             return;
         ++feasible;
         const double score = objective.evaluate(forecast, construction).score;
@@ -75,6 +100,8 @@ CivilizationPlan CivilizationPlanner::choose(SchedulingResult initial, const std
             best.construction = construction;
             best.forecastScore = score;
         }
+        if (observer)
+            observer(schedule, construction, std::move(forecast));
     };
 
     const auto standard = InfrastructureOptimizer::optimize(projects, budget);
@@ -274,4 +301,160 @@ CoordinatedAid CivilizationPlanner::coordinateAid(CivilizationPlan& plan, const 
     aid.allocation.transfers.clear();
     aid.allocation.totalDelivered = 0;
     return aid;
+}
+
+AnytimePlan CivilizationPlanner::anytime(const benchmark::Scenario& data, const CivilizationObjective& legacy,
+    const CivilizationObjective& expanded, const CivilizationObjective& objective,
+    const std::unordered_set<int>& colonies, int budget, double horizon, const RouteWeights& weights,
+    const std::vector<Event>& knownProductionChanges, PlanningBudget& clock,
+    bool coordinatedAllocator, bool indexedAid, bool reverseBounds,
+    const std::function<std::vector<Mission>()>& proposeAid, bool proactiveSimulation) {
+    AnytimePlan result;
+    result.jobs = data.missions;
+    auto publish = [&](const SchedulingResult& schedule, const InfrastructureOptimizationResult& construction,
+        SimulationResult&& replay, const std::vector<Mission>& jobs) {
+        const auto active = objective.evaluate(replay, construction);
+        const double ready = clock.elapsed();
+        if (schedule.missionsScheduled > 0 && !result.firstUseful)
+            result.firstUseful = ready;
+        if (result.forecast && active.score <= result.plan.forecastScore + 1e-9)
+            return;
+
+        const auto old = legacy.evaluate(replay, construction);
+        const auto next = expanded.evaluate(replay, construction);
+        auto committed = withOrigins(jobs, schedule);
+        auto accepted = schedule;
+        std::unordered_set<int> scheduled;
+        for (const auto& row : schedule.scheduled)
+            scheduled.insert(row.missionId);
+        accepted.rejectedMissionIds.clear();
+        int unscheduled = 0;
+        for (const auto& job : committed)
+            if (!scheduled.contains(job.id))
+                accepted.rejectedMissionIds.push_back(job.id);
+        for (const auto& job : data.missions)
+            unscheduled += !scheduled.contains(job.id);
+        PlanningBudget::checkpoint();
+        result.plan.schedule = std::move(accepted);
+        result.plan.construction = construction;
+        result.plan.forecastScore = active.score;
+        result.jobs = std::move(committed);
+        result.trace.push_back({clock.elapsed(), old.score, next.score, active.service,
+            active.criticalEndingShortage, replay.remainingShortage, replay.stockoutAmount,
+            replay.transportationCost, replay.fuel, replay.waste, replay.risk,
+            replay.completed, replay.failed, unscheduled});
+        result.forecast = std::move(replay);
+        if (result.trace.size() > 1)
+            ++result.accepted;
+    };
+    auto replay = [&](const SchedulingResult& schedule, const InfrastructureOptimizationResult& construction,
+        const std::vector<Mission>& jobs) {
+        PlanningBudget::checkpoint();
+        ++result.evaluated;
+        ValidationTimer timer{&result.validationSeconds};
+        auto events = knownProductionChanges;
+        const auto builds = constructionEvents(data.projects, construction);
+        events.insert(events.end(), builds.begin(), builds.end());
+        const auto revised = withOrigins(jobs, schedule);
+        auto forecast = SimulationEngine::run(data.graph, data.inventory, revised, data.ships, schedule,
+            events, {}, false, horizon);
+        if (intact(schedule, revised, forecast))
+            publish(schedule, construction, std::move(forecast), jobs);
+    };
+
+    SchedulingResult prefix;
+    try {
+        clock.stage("initial-validation");
+        replay({}, {}, data.missions);
+        clock.stage("initial-scheduling");
+        const std::vector<Mission> noAid;
+        const InventoryPlanningInput initialInventory{data.inventory, data.aidDemands, noAid};
+        prefix = MissionScheduler::schedule(data.missions, data.ships, data.graph, weights, false, {},
+            &initialInventory, true, [&](const SchedulingResult& partial) {
+                clock.stage("prefix-validation");
+                replay(partial, {}, data.missions);
+                clock.stage("initial-scheduling");
+            });
+        if (prefix.interrupted)
+            throw PlanningBudget::Interrupted{};
+        clock.stage("prefix-validation");
+        replay(prefix, {}, data.missions);
+
+        std::vector<Mission> jobs = data.missions;
+        std::vector<Mission> aid;
+        SchedulingResult initial;
+        if (!coordinatedAllocator) {
+            clock.stage("allocation");
+            aid = proposeAid();
+            jobs.insert(jobs.end(), aid.begin(), aid.end());
+        }
+        if (aid.empty())
+            initial = prefix;
+        else {
+            clock.stage("scheduling-with-aid");
+            const InventoryPlanningInput input{data.inventory, data.aidDemands, aid};
+            initial = MissionScheduler::schedule(jobs, data.ships, data.graph, weights, false, {}, &input, true);
+        }
+        clock.stage("candidate-planning");
+        choose(std::move(initial), jobs, aid, data.inventory, data.aidDemands, data.ships, data.graph,
+            data.projects, objective, colonies, budget, horizon, weights, knownProductionChanges,
+            [&](const SchedulingResult& schedule, const InfrastructureOptimizationResult& construction,
+                SimulationResult&& forecast) { publish(schedule, construction, std::move(forecast), jobs); },
+            &result.validationSeconds, &result.evaluated);
+
+        if (coordinatedAllocator && result.forecast) {
+            clock.stage("aid-coordination");
+            auto candidate = result.plan;
+            auto known = knownProductionChanges;
+            const auto builds = constructionEvents(data.projects, candidate.construction);
+            known.insert(known.end(), builds.begin(), builds.end());
+            auto coordination = coordinateAid(candidate, result.jobs, data.inventory, data.aidDemands,
+                data.ships, data.graph, objective, known, horizon,
+                LogisticsPlanner::firstAvailableMissionId(result.jobs, data.events), indexedAid,
+                AidRoutingOptions{reverseBounds, {}});
+            if (coordination.retained) {
+                auto augmented = result.jobs;
+                augmented.insert(augmented.end(), coordination.missions.begin(), coordination.missions.end());
+                const auto before = result.trace.size();
+                replay(candidate.schedule, candidate.construction, augmented);
+                if (result.trace.size() != before)
+                    result.coordinated = std::move(coordination);
+            }
+        }
+        result.planningComplete = true;
+    } catch (const PlanningBudget::Interrupted&) {
+        ++result.interrupted;
+    }
+
+    clock.finalWork();
+    if (prefix.interrupted && !prefix.scheduled.empty() && clock.memoryAvailable()) {
+        try {
+            clock.stage("final-prefix-validation");
+            replay(prefix, {}, data.missions);
+        } catch (const PlanningBudget::Interrupted&) {
+            ++result.interrupted;
+        }
+    }
+    if (result.forecast && clock.memoryAvailable()) {
+        try {
+            clock.stage("simulation");
+            PlanningBudget::checkpoint();
+            auto events = data.events;
+            const auto builds = constructionEvents(data.projects, result.plan.construction);
+            events.insert(events.end(), builds.begin(), builds.end());
+            auto known = knownProductionChanges;
+            known.insert(known.end(), builds.begin(), builds.end());
+            const SimulationObjective scoring{objective, result.plan.construction};
+            auto simulation = SimulationEngine::run(data.graph, data.inventory, result.jobs, data.ships,
+                result.plan.schedule, events, {}, false, horizon, proactiveSimulation ? &known : nullptr, &scoring);
+            PlanningBudget::checkpoint();
+            result.simulation = std::move(simulation);
+        } catch (const PlanningBudget::Interrupted&) {
+            // An incomplete replay is never exposed as a simulation outcome.
+        }
+    }
+    if (!result.forecast)
+        for (const auto& job : data.missions)
+            result.plan.schedule.rejectedMissionIds.push_back(job.id);
+    return result;
 }

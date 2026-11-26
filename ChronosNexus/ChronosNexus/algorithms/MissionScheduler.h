@@ -51,6 +51,7 @@ struct SchedulingResult {
     int locallyRecovered = 0;
     long long searchArcs = 0;
     long long prunedArcs = 0;
+    bool interrupted = false;
 };
 
 struct InventoryPlanningInput {
@@ -70,7 +71,8 @@ public:
         bool earliestArrival = false,
         const std::function<void(size_t)>& progress = {},
         const InventoryPlanningInput* inventory = nullptr,
-        bool benefitAware = false
+        bool benefitAware = false,
+        const std::function<void(const SchedulingResult&)>& publishPrefix = {}
     );
     static bool feasible(const Mission& mission, const Spacecraft& ship,
         double departure, const RouteMetrics& route, double& arrival);

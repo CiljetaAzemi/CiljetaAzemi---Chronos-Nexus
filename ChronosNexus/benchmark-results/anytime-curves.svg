@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="660" viewBox="0 0 780 660" font-family="Arial, sans-serif" fill="#182534">
+<rect width="780" height="660" fill="white"/>
+<text x="40" y="34" font-size="22" font-weight="bold">Validated incumbent quality over time</text>
+<text x="40" y="57" font-size="13">Standard scenarios · legacy nominal objective · elapsed time on a log scale</text>
+<text x="40" y="89" font-size="15" font-weight="bold">small</text>
+<line x1="96" x2="728" y1="221" y2="221" stroke="#e0e5ec"/>
+<text x="83" y="225" text-anchor="end" font-size="11">48</text>
+<text x="96" y="238" text-anchor="middle" font-size="11">3.8 ms</text>
+<line x1="96" x2="728" y1="190" y2="190" stroke="#e0e5ec"/>
+<text x="83" y="194" text-anchor="end" font-size="11">50.3</text>
+<text x="254" y="238" text-anchor="middle" font-size="11">5.9 ms</text>
+<line x1="96" x2="728" y1="159" y2="159" stroke="#e0e5ec"/>
+<text x="83" y="163" text-anchor="end" font-size="11">52.5</text>
+<text x="412" y="238" text-anchor="middle" font-size="11">9.1 ms</text>
+<line x1="96" x2="728" y1="128" y2="128" stroke="#e0e5ec"/>
+<text x="83" y="132" text-anchor="end" font-size="11">54.8</text>
+<text x="570" y="238" text-anchor="middle" font-size="11">14 ms</text>
+<line x1="96" x2="728" y1="97" y2="97" stroke="#e0e5ec"/>
+<text x="83" y="101" text-anchor="end" font-size="11">57</text>
+<text x="728" y="238" text-anchor="middle" font-size="11">21.7 ms</text>
+<path d="M 221.72 198.41 H 266.05 V 191.55 H 300.16 V 186.72 H 325.46 V 180.48 H 356.68 V 172.08 H 386.77 V 165.12 H 503.53 V 119.88 H 581.63 V 119.14 H 728" fill="none" stroke="#1e63a3" stroke-width="2.5" stroke-dasharray="6 4"/>
+<text x="460" y="89" fill="#1e63a3" font-size="12">25 ms budget</text>
+<path d="M 96 198.41 H 126.84 V 191.55 H 161.72 V 186.72 H 187.9 V 180.48 H 222.21 V 172.08 H 258.01 V 165.12 H 410.31 V 119.88 H 508.61 V 119.14 H 702.06" fill="none" stroke="#a74912" stroke-width="2.5" />
+<text x="602" y="89" fill="#a74912" font-size="12">2500 ms budget</text>
+<text x="40" y="267" font-size="15" font-weight="bold">medium</text>
+<line x1="96" x2="728" y1="399" y2="399" stroke="#e0e5ec"/>
+<text x="83" y="403" text-anchor="end" font-size="11">48</text>
+<text x="96" y="416" text-anchor="middle" font-size="11">10.1 ms</text>
+<line x1="96" x2="728" y1="368" y2="368" stroke="#e0e5ec"/>
+<text x="83" y="372" text-anchor="end" font-size="11">50.5</text>
+<text x="254" y="416" text-anchor="middle" font-size="11">25.9 ms</text>
+<line x1="96" x2="728" y1="337" y2="337" stroke="#e0e5ec"/>
+<text x="83" y="341" text-anchor="end" font-size="11">53</text>
+<text x="412" y="416" text-anchor="middle" font-size="11">66.2 ms</text>
+<line x1="96" x2="728" y1="306" y2="306" stroke="#e0e5ec"/>
+<text x="83" y="310" text-anchor="end" font-size="11">55.5</text>
+<text x="570" y="416" text-anchor="middle" font-size="11">169.2 ms</text>
+<line x1="96" x2="728" y1="275" y2="275" stroke="#e0e5ec"/>
+<text x="83" y="279" text-anchor="end" font-size="11">58</text>
+<text x="728" y="416" text-anchor="middle" font-size="11">432.6 ms</text>
+<path d="M 102.81 378.67 H 175.34 V 377.45 H 195.9 V 376.81 H 248.48 V 375.23 H 290.32 V 371.25 H 346.17 V 365.48 H 379.72 V 355.82 H 444.71 V 343.89 H 459.02 V 339.87 H 463.88" fill="none" stroke="#1e63a3" stroke-width="2.5" stroke-dasharray="6 4"/>
+<text x="460" y="267" fill="#1e63a3" font-size="12">100 ms budget</text>
+<path d="M 96 378.67 H 178.59 V 377.45 H 199.19 V 376.81 H 237.78 V 375.23 H 269.33 V 371.25 H 321.47 V 365.48 H 363.05 V 355.82 H 432.39 V 343.89 H 472.27 V 332.18 H 503.87 V 329.77 H 616.38 V 288.42 H 626.03 V 288.41 H 728" fill="none" stroke="#a74912" stroke-width="2.5" />
+<text x="602" y="267" fill="#a74912" font-size="12">5000 ms budget</text>
+<text x="40" y="445" font-size="15" font-weight="bold">large</text>
+<line x1="96" x2="728" y1="577" y2="577" stroke="#e0e5ec"/>
+<text x="83" y="581" text-anchor="end" font-size="11">48</text>
+<text x="96" y="594" text-anchor="middle" font-size="11">73.8 ms</text>
+<line x1="96" x2="728" y1="546" y2="546" stroke="#e0e5ec"/>
+<text x="83" y="550" text-anchor="end" font-size="11">50.5</text>
+<text x="254" y="594" text-anchor="middle" font-size="11">360.8 ms</text>
+<line x1="96" x2="728" y1="515" y2="515" stroke="#e0e5ec"/>
+<text x="83" y="519" text-anchor="end" font-size="11">53</text>
+<text x="412" y="594" text-anchor="middle" font-size="11">1763.1 ms</text>
+<line x1="96" x2="728" y1="484" y2="484" stroke="#e0e5ec"/>
+<text x="83" y="488" text-anchor="end" font-size="11">55.5</text>
+<text x="570" y="594" text-anchor="middle" font-size="11">8616.4 ms</text>
+<line x1="96" x2="728" y1="453" y2="453" stroke="#e0e5ec"/>
+<text x="83" y="457" text-anchor="end" font-size="11">58</text>
+<text x="728" y="594" text-anchor="middle" font-size="11">42109.7 ms</text>
+<path d="M 112.53 556.67 H 164.61 V 556.54 H 213.08 V 556.4 H 258.74 V 556.16 H 278.81 V 555.71 H 325.21 V 554.82 H 350.28 V 553.1 H 381.82 V 550.52 H 443.63 V 545.57 H 486.46 V 537.96 H 521.65 V 526.72 H 554.56 V 514.22 H 587.99 V 509.3 H 663.68 V 469.22 H 664.27 V 469.22 H 701.07" fill="none" stroke="#1e63a3" stroke-width="2.5" stroke-dasharray="6 4"/>
+<text x="460" y="445" fill="#1e63a3" font-size="12">35000 ms budget</text>
+<path d="M 96 556.67 H 152.12 V 556.54 H 207.43 V 556.4 H 260.31 V 556.16 H 283.65 V 555.71 H 329.76 V 554.82 H 354.2 V 553.1 H 387.33 V 550.52 H 447.29 V 545.57 H 489.04 V 537.96 H 525.07 V 526.72 H 557.85 V 514.22 H 591.82 V 509.3 H 667.52 V 469.22 H 668.11 V 469.22 H 728" fill="none" stroke="#a74912" stroke-width="2.5" />
+<text x="602" y="445" fill="#a74912" font-size="12">45000 ms budget</text>
+<text x="40" y="645" font-size="12">Each step is a published nominal replay. Horizontal endpoints are engine return times.</text>
+</svg>

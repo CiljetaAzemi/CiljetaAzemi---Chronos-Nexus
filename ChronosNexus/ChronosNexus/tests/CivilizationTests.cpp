@@ -1,11 +1,57 @@
 #include "TestSupport.h"
 #include "../algorithms/CivilizationPlanner.h"
+#include "../benchmarks/DatasetGenerator.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
 
 namespace regression {
 void testCivilization() {
+    {
+        const auto fixture = makeFlightFixture();
+        benchmark::Scenario data;
+        data.graph = fixture.graph;
+        data.ships = {fixture.ship};
+        data.missions = {fixture.first, fixture.second};
+        data.inventory = {
+            {fixture.first.origin, 100, 0, 1, fixture.first.cargoType, 0, 0, 100},
+            {fixture.first.destination, 0, 0, 1, fixture.first.cargoType, 0, 0, 100}};
+        const CivilizationObjective legacy(data.inventory, data.missions, {}, {}, 30, 0,
+            CivilizationObjective::parseWeights("balanced"));
+        const auto expanded = legacy.expanded("balanced", data.inventory, {}, {}, 30);
+        const std::vector<Mission> none;
+        auto noAid = [&] { return none; };
+        {
+            PlanningBudget clock({20});
+            const auto result = CivilizationPlanner::anytime(data, legacy, expanded, legacy, {}, 0, 30,
+                {}, {}, clock, false, true, false, noAid);
+            require(result.forecast && result.planningComplete && result.simulation &&
+                result.trace.front().scheduled == 0 && result.firstUseful &&
+                result.plan.schedule.scheduled.size() + result.plan.schedule.rejectedMissionIds.size() == data.missions.size(),
+                "Anytime planning must return a validated incumbent, keep every obligation and separate simulation status.");
+            for (size_t i = 1; i < result.trace.size(); ++i)
+                require(result.trace[i].legacyScore > result.trace[i - 1].legacyScore &&
+                    result.trace[i].seconds >= result.trace[i - 1].seconds,
+                    "Accepted incumbent scores must increase under the fixed active objective.");
+        }
+        {
+            PlanningBudget clock({20});
+            const InventoryPlanningInput input{data.inventory, {}, none};
+            const auto prefix = MissionScheduler::schedule(data.missions, data.ships, data.graph, {}, false, {},
+                &input, true, [&](const SchedulingResult&) { clock.requestStop(); });
+            require(prefix.interrupted && prefix.scheduled.size() == 1 &&
+                prefix.missionsScheduled == 1 && std::string_view(clock.reason()) == "cancelled",
+                "Interrupting after a booking must preserve the committed scheduler prefix.");
+        }
+        {
+            PlanningBudget clock({20});
+            const auto result = CivilizationPlanner::anytime(data, legacy, expanded, legacy, {}, 0, 30,
+                {}, {}, clock, false, true, false, [&] { clock.requestStop(); PlanningBudget::checkpoint(); return none; });
+            require(result.forecast && !result.planningComplete && !result.simulation && result.interrupted == 1 &&
+                std::string_view(clock.exhaustedAt()) == "allocation",
+                "An interrupted candidate must preserve the incumbent and must not publish a simulation.");
+        }
+    }
     {
         const std::vector<ResourceDemand> accounts{
             {1, 0, 0, 1, ResourceType::Food, 0, 1},

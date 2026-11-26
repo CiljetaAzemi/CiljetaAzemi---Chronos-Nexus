@@ -1,6 +1,9 @@
 #pragma once
 
 #include "CivilizationObjective.h"
+#include "PlanningBudget.h"
+
+namespace benchmark { struct Scenario; }
 
 struct CivilizationPlan {
     SchedulingResult schedule;
@@ -19,8 +22,37 @@ struct CoordinatedAid {
     double replaySeconds = 0;
 };
 
+struct IncumbentSample {
+    double seconds, legacyScore, expandedScore, timelyService, criticalShortage;
+    double shortage, unserved, transportation, fuel, waste, risk;
+    int scheduled, failed, unscheduled;
+};
+
+struct AnytimePlan {
+    CivilizationPlan plan;
+    std::vector<Mission> jobs;
+    CoordinatedAid coordinated;
+    std::optional<SimulationResult> forecast;
+    std::optional<SimulationResult> simulation;
+    std::vector<IncumbentSample> trace;
+    std::optional<double> firstUseful;
+    double validationSeconds = 0;
+    int evaluated = 0, accepted = 0, interrupted = 0;
+    bool planningComplete = false;
+};
+
 class CivilizationPlanner {
 public:
+    using CandidateObserver = std::function<void(const SchedulingResult&,
+        const InfrastructureOptimizationResult&, SimulationResult&&)>;
+
+    static AnytimePlan anytime(const benchmark::Scenario& data, const CivilizationObjective& legacy,
+        const CivilizationObjective& expanded, const CivilizationObjective& objective,
+        const std::unordered_set<int>& colonies, int budget, double horizon, const RouteWeights& weights,
+        const std::vector<Event>& knownProductionChanges, PlanningBudget& clock,
+        bool coordinatedAllocator, bool indexedAid, bool reverseBounds,
+        const std::function<std::vector<Mission>()>& proposeAid, bool proactiveSimulation = false);
+
     static CoordinatedAid coordinateAid(CivilizationPlan& plan, const std::vector<Mission>& obligations,
         const std::vector<ResourceDemand>& accounts, const std::vector<ResourceDemand>& network,
         const std::vector<Spacecraft>& ships, const GalaxyGraph& graph, const CivilizationObjective& objective,
@@ -36,5 +68,6 @@ public:
         const GalaxyGraph& graph, const std::vector<Infrastructure>& projects,
         const CivilizationObjective& objective, const std::unordered_set<int>& colonies,
         int budget, double horizon, const RouteWeights& weights,
-        const std::vector<Event>& knownProductionChanges = {});
+        const std::vector<Event>& knownProductionChanges = {}, const CandidateObserver& observer = {},
+        double* validationSeconds = nullptr, int* evaluatedCandidates = nullptr);
 };

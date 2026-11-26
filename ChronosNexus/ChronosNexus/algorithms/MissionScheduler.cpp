@@ -1,4 +1,5 @@
 #include "MissionScheduler.h"
+#include "PlanningBudget.h"
 #include "InventoryReservations.h"
 
 #include <algorithm>
@@ -54,7 +55,8 @@ double MissionScheduler::bookingValue(const Mission& mission, const Spacecraft& 
 SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
     std::vector<Spacecraft> ships, const GalaxyGraph& galaxy,
     const RouteWeights& weights, bool earliestArrival,
-    const std::function<void(size_t)>& progress, const InventoryPlanningInput* inventory, bool benefitAware) {
+    const std::function<void(size_t)>& progress, const InventoryPlanningInput* inventory, bool benefitAware,
+    const std::function<void(const SchedulingResult&)>& publishPrefix) {
     SchedulingResult result;
     std::optional<InventoryReservations> reservations;
     if (inventory)
@@ -147,6 +149,7 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
             if (!candidate.found)
                 return;
             for (size_t i : origin->second) {
+                PlanningBudget::checkpoint();
                 ++result.candidates;
                 const auto& ship = ships[i];
                 double arrival;
@@ -215,67 +218,81 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
 
     std::vector<const Mission*> retry;
     size_t processed = result.rejectedMissionIds.size();
-    for (const auto& mission : missions) {
-        if (progress)
-            progress(processed);
-        ++processed;
-        if (!assign(mission)) {
-            if (inventory)
-                retry.push_back(&mission);
-            else
-                result.rejectedMissionIds.push_back(mission.id);
-        }
-    }
-    if (inventory && !retry.empty()) {
-        std::unordered_set<int> aidIds;
-        std::unordered_map<ResourceType, std::unordered_set<int>> donors;
-        for (const auto& mission : inventory->aidMissions)
-            aidIds.insert(mission.id);
-        for (const auto& demand : inventory->aidNetwork)
-            if (demand.available > demand.required)
-                donors[demand.type].insert(demand.planetId);
-        std::optional<GalaxyGraph> reverse;
-        std::uint64_t reverseRevision = 0;
-
-        // Try one append-only insertion pass. Existing ship assignments and times stay fixed.
-        for (const auto* mission : retry) {
+    try {
+        size_t nextPublication = 1;
+        for (const auto& mission : missions) {
+            PlanningBudget::checkpoint();
             if (progress)
                 progress(processed);
             ++processed;
-            bool recovered = assign(*mission);
-            if (!recovered && aidIds.contains(mission->id) && donors.contains(mission->cargoType)) {
-                if (!reverse || reverseRevision != galaxy.revision()) {
-                    reverse.emplace(galaxy.reversed());
-                    reverseRevision = galaxy.revision();
-                }
-                const auto& candidates = donors.at(mission->cargoType);
-                std::unordered_set<int> tried{mission->origin, mission->destination};
-                for (int attempt = 0; attempt < 4 && !recovered; ++attempt) {
-                    const auto nearest = Dijkstra::findNearest(*reverse, mission->destination,
-                        [&](int id) {
-                            auto local = atLocation.find(id);
-                            return candidates.contains(id) && !tried.contains(id) &&
-                                local != atLocation.end() && !local->second.empty();
-                        }, weights, mission->cargoAmount);
-                    result.nodesExplored += nearest.nodesExplored;
-                    if (!nearest.found)
-                        break;
-                    Mission alternative = *mission;
-                    alternative.origin = nearest.path.back();
-                    tried.insert(alternative.origin);
-                    recovered = assign(alternative);
-                    if (recovered)
-                        result.revisedOrigins.emplace(alternative.id, alternative.origin);
-                }
+            if (!assign(mission)) {
+                if (inventory)
+                    retry.push_back(&mission);
+                else
+                    result.rejectedMissionIds.push_back(mission.id);
             }
-            if (recovered)
-                result.recoveredMissionIds.push_back(mission->id);
-            else
-                result.rejectedMissionIds.push_back(mission->id);
+            if (publishPrefix && result.scheduled.size() == nextPublication) {
+                result.missionsScheduled = static_cast<int>(result.scheduled.size());
+                publishPrefix(result);
+                nextPublication *= 2;
+            }
         }
+        if (inventory && !retry.empty()) {
+            std::unordered_set<int> aidIds;
+            std::unordered_map<ResourceType, std::unordered_set<int>> donors;
+            for (const auto& mission : inventory->aidMissions)
+                aidIds.insert(mission.id);
+            for (const auto& demand : inventory->aidNetwork)
+                if (demand.available > demand.required)
+                    donors[demand.type].insert(demand.planetId);
+            std::optional<GalaxyGraph> reverse;
+            std::uint64_t reverseRevision = 0;
+
+            // Try one append-only insertion pass. Existing ship assignments and times stay fixed.
+            for (const auto* mission : retry) {
+                PlanningBudget::checkpoint();
+                if (progress)
+                    progress(processed);
+                ++processed;
+                bool recovered = assign(*mission);
+                if (!recovered && aidIds.contains(mission->id) && donors.contains(mission->cargoType)) {
+                    if (!reverse || reverseRevision != galaxy.revision()) {
+                        reverse.emplace(galaxy.reversed());
+                        reverseRevision = galaxy.revision();
+                    }
+                    const auto& candidates = donors.at(mission->cargoType);
+                    std::unordered_set<int> tried{mission->origin, mission->destination};
+                    for (int attempt = 0; attempt < 4 && !recovered; ++attempt) {
+                        const auto nearest = Dijkstra::findNearest(*reverse, mission->destination,
+                            [&](int id) {
+                                auto local = atLocation.find(id);
+                                return candidates.contains(id) && !tried.contains(id) &&
+                                    local != atLocation.end() && !local->second.empty();
+                            }, weights, mission->cargoAmount);
+                        result.nodesExplored += nearest.nodesExplored;
+                        if (!nearest.found)
+                            break;
+                        Mission alternative = *mission;
+                        alternative.origin = nearest.path.back();
+                        tried.insert(alternative.origin);
+                        recovered = assign(alternative);
+                        if (recovered)
+                            result.revisedOrigins.emplace(alternative.id, alternative.origin);
+                    }
+                }
+                if (recovered)
+                    result.recoveredMissionIds.push_back(mission->id);
+                else
+                    result.rejectedMissionIds.push_back(mission->id);
+            }
+        }
+        if (progress)
+            progress(processed);
+    } catch (const PlanningBudget::Interrupted&) {
+        if (!publishPrefix)
+            throw;
+        result.interrupted = true;
     }
-    if (progress)
-        progress(processed);
     result.missionsScheduled = static_cast<int>(result.scheduled.size());
     return result;
 }

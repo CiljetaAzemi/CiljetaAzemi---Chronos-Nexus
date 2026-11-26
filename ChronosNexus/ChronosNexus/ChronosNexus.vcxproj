@@ -158,6 +158,7 @@
     <ClCompile Include="examples\RoutingDemo.cpp" />
     <ClCompile Include="examples\PlanningDemo.cpp" />
     <ClCompile Include="examples\LogisticsDemo.cpp" />
+    <ClCompile Include="algorithms\PlanningBudget.cpp" />
     <ClCompile Include="algorithms\CivilizationObjective.cpp" />
     <ClCompile Include="algorithms\CivilizationPlanner.cpp" />
     <ClCompile Include="algorithms\PlanImprover.cpp" />
@@ -181,6 +182,7 @@
     <ClInclude Include="tests\RegressionTests.h" />
     <ClInclude Include="tests\TestSupport.h" />
     <ClInclude Include="examples\DemoSections.h" />
+    <ClInclude Include="algorithms\PlanningBudget.h" />
     <ClInclude Include="algorithms\InventoryReservations.h" />
     <ClInclude Include="algorithms\CivilizationObjective.h" />
     <ClInclude Include="algorithms\CivilizationPlanner.h" />

@@ -188,3 +188,31 @@ All 18 balanced Small and Medium runs completed with zero execution failures. Th
 | Production cut | 2,087.50 / 2,224.00 / 2,329.00 | 11,206.30 / 11,206.30 / 9,454.67 | 245 / 245 / 201 |
 
 On Medium scarcity the security and service profiles matched the balanced profile on the reported service, shortage, completion, fuel, cost, waste, and risk outcomes. The exact controlled fixture detected preference-sensitive choices. Each benchmark cell is a single observation, so the study does not estimate timing variance. All three Large runs reached the 45-second limit during scheduling. Complete-plan quality is unavailable for Large. The CSV preserves each timeout and its last recorded stage.
+
+## Computational budget study
+
+```powershell
+./ChronosNexus/Run-Anytime-Study.ps1 -Executable PATH_TO_RELEASE_X64_EXE -OutputDirectory PATH_TO_NEW_RESULTS_DIRECTORY
+./ChronosNexus/Plot-AnytimeStudy.ps1 -SummaryCsv PATH_TO_ANYTIME_CSV -IncumbentsCsv PATH_TO_INCUMBENTS_CSV -OutputSvg PATH_TO_SVG
+```
+
+The controls use the same executable, datasets, seeds, constraints, and objective formulas, with the budget flags omitted. Seed `20261120` provides Large continuity. The other seeds exercise new standard, scarcity, production-cut, and urgent-event cases. The dynamic case adds a deterministic urgent request to the generated disruption stream. Study dimensions are 100/500/50, 1,000/10,000/500, and 10,000/100,000/5,000 planets, routes, and external missions before generated aid or activated urgent requests. Selected Small, Medium and Large budget configurations are repeated. The runner compares both objectives and includes experiments with indexed feasibility-aware aid and reverse bounds on selected Small and Medium cases.
+
+An internal budget of zero in the CSV represents the unbudgeted control. The external watchdog remains active for all runs. Controls report simulated outcomes only when they complete. Budgeted runs have separate nominal incumbent samples and completed event simulation outcomes. The summary columns for realized scores, completions, shortage, service, and costs are unavailable when the event simulation does not finish. The first nonempty timestamp includes validation of the first nonempty candidate even if the active score favors an earlier incumbent. The logged unassigned count covers original external missions, before any urgent requests. Engine time is measured inside the executable. Wall time includes process launch, report I/O and watchdog sampling. Process peak working set is neither a heap allocation measurement nor a hard memory limit.
+
+[Study summary](anytime-study.csv) · [Incumbent samples](anytime-incumbents.csv) · [Quality-versus-time curves](anytime-curves.svg) · [Budget implementation and analysis](../ANYTIME.md)
+
+All 48 processes returned before the external watchdog. Of the 33 budgeted runs, 32 returned a validated incumbent and completed the event simulation. Twenty-two completed the full static candidate pipeline. The 1 ms run returned no validated plan. The maximum engine overshoot was 2.45 ms on that run. Engine time stayed within the requested limit for every tested budget of 25 ms or more. The maximum end-to-end wall overshoot was 102.23 ms, including launch and reporting. The largest budgeted engine working-set peak was 84.95 MiB. All 306 incumbent samples maintained strictly increasing scores under each run's active objective.
+
+| Scenario and active objective | Budget | First nonempty candidate | Engine return | Completed / failed | Realized legacy / expanded |
+|---|---:|---:|---:|---:|---:|
+| Small standard, legacy | 25 ms | 6.05 ms | 21.72 ms | 19 / 1 | 55.335 / 73.591 |
+| Medium standard, legacy | 100 ms | 16.16 ms | 90.08 ms | 79 / 0 | 52.761 / 74.759 |
+| Medium standard, legacy | 750 ms | 14.64 ms | 414.52 ms | 251 / 1 | 56.880 / 74.344 |
+| Large standard, legacy | 35 s | 0.145 s | 32.13 s | 2,414 / 13 | 56.652 / 74.071 |
+| Large standard, legacy, two repeats | 45 s | 0.128–0.148 s | 42.11–42.14 s | 2,414 / 13 in both | 56.652 / 74.071 in both |
+| Large dynamic, legacy | 35 s | 0.148 s | 32.10 s | 2,475 / 10 | 56.524 / 74.149 |
+
+The current unbudgeted Large controls completed in 34.19 s and 35.96 s. These measurements differ from the earlier objective-study timeouts. Every budgeted Large run stopped during candidate planning and completed simulation with the same realized scores and mission counts as its paired control. Large standard published its final incumbent at 22.21–23.08 s. Recorded validation accounted for 0.66–0.79 s across budgeted Large runs. The original-obligation gaps remained substantial, with 3,017 external missions unassigned on Large standard and 2,971 on Large dynamic.
+
+A generous budget reproduced the tested legacy controls' reported outcomes. The expanded model sometimes selected a materially different plan. On Medium dynamic it increased its realized score from 75.904 to 76.074 while completions dropped from 255 to 208 and ending shortage rose from 2,160.68 to 2,313. On Small scarcity the expanded score preferred the empty plan to serving six missions. This reflects the active objective's trade-off between reported stock security, costs, and service. The CSV retains both scores and raw outcomes. Rare wall-time or memory peaks outside these scenarios remain possible.

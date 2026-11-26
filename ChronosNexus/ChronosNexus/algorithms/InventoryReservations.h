@@ -1,4 +1,5 @@
 #pragma once
+#include "PlanningBudget.h"
 
 #include "ResourceAllocator.h"
 
@@ -178,6 +179,7 @@ public:
                     last = time;
                 };
                 for (const auto& [time, change] : account.changes) {
+                    PlanningBudget::checkpoint();
                     if (time > horizon)
                         break;
                     advanceTo(time);
@@ -228,6 +230,7 @@ private:
         double previous = 0;
         double rate = account.rate;
         for (const auto& [time, change] : account.changes) {
+            PlanningBudget::checkpoint();
             stock = advance(account, stock, rate, time - previous);
             if (change.in < 0 || change.out < 0 || change.in > account.capacity - stock)
                 return false;
@@ -267,6 +270,7 @@ private:
             }
         };
         for (const auto& [time, change] : account.changes) {
+            PlanningBudget::checkpoint();
             if (time > latest)
                 break;
             segment(time);

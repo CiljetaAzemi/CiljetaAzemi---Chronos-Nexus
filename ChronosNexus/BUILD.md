@@ -11,6 +11,7 @@
 | Regression tests | `--self-test` |
 | Console demonstration | Leave blank |
 | Benchmark | `--benchmark small 20261118 custom` |
+| Budget-aware Phase 3 | `--benchmark small 20261129 phase3 --time-budget-ms=200 --memory-budget-mib=1024` |
 
 Substitute `medium`, `large`, or `extreme` for the dataset size. Direct IDE execution uses no external budget controller. Use the [benchmark runner](Run-Benchmarks.ps1) for resource limits and CSV output. Its default executable is `ChronosNexus/x64/Release/ChronosNexus.exe` relative to the repository root. New runner output defaults to the local `benchmark-results/runs/` directory. Use a separate `-OutputDirectory` when switching between runs with different CSV columns.
 

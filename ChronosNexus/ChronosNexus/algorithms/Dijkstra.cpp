@@ -1,4 +1,5 @@
 #include "Dijkstra.h"
+#include "PlanningBudget.h"
 
 #include <algorithm>
 #include <cmath>
@@ -63,6 +64,7 @@ PathResult Dijkstra::findNearest(const GalaxyGraph& graph, int start,
     queue.push({0, start});
     int destination = start;
     while (!queue.empty()) {
+        PlanningBudget::checkpoint();
         auto [cost, node] = queue.top();
         queue.pop();
         if (cost != distance.at(node))
@@ -75,6 +77,8 @@ PathResult Dijkstra::findNearest(const GalaxyGraph& graph, int start,
             break;
         }
         for (const Route& edge : graph.getRoutes(node)) {
+            if ((result.edgesExplored & 127) == 0)
+                PlanningBudget::checkpoint();
             ++result.edgesExplored;
             if (!usable(edge, cargo))
                 continue;
@@ -112,12 +116,15 @@ TravelTimeBounds Dijkstra::reverseTimeBounds(const GalaxyGraph& reversed, int re
     result.time.emplace(receiver, 0);
     queue.emplace(0, receiver);
     while (!queue.empty()) {
+        PlanningBudget::checkpoint();
         const auto [distance, location] = queue.top();
         queue.pop();
         if (distance != result.time.at(location))
             continue;
         ++result.nodes;
         for (const auto& edge : reversed.getRoutes(location)) {
+            if ((result.edges & 127) == 0)
+                PlanningBudget::checkpoint();
             ++result.edges;
             if (!usable(edge, 0))
                 continue;

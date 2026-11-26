@@ -72,6 +72,7 @@ int runBenchmark(int argc, char* argv[]) {
     bool indexedAid = true;
     bool reverseAidBounds = false;
     bool expandedObjective = false;
+    BudgetLimits limits;
     std::string profile = "balanced", scenario = "standard";
     for (int i = 5; i < argc; ++i) {
         const std::string option = argv[i];
@@ -94,11 +95,11 @@ int runBenchmark(int argc, char* argv[]) {
             reportCivilization = true;
         } else if (option.starts_with("--scenario="))
             scenario = option.substr(11);
-        else
+        else if (!limits.parse(option))
             throw std::invalid_argument("Unknown benchmark option: " + option);
     }
-    if (scenario != "standard" && scenario != "scarcity" && scenario != "production-cut")
-        throw std::invalid_argument("Expected standard, scarcity, or production-cut scenario.");
+    if (scenario != "standard" && scenario != "scarcity" && scenario != "production-cut" && scenario != "dynamic")
+        throw std::invalid_argument("Expected standard, scarcity, production-cut, or dynamic scenario.");
     if (feasibilityAwareAllocator && (!civilization || experimentalAllocator))
         throw std::invalid_argument("Feasibility-aware allocation requires phase3 and a single allocator.");
     if (!indexedAid && !feasibilityAwareAllocator)
@@ -108,14 +109,28 @@ int runBenchmark(int argc, char* argv[]) {
     const auto coefficients = CivilizationObjective::parseWeights(profile);
     if (expandedObjective && (!civilization || profile.find(',') != std::string::npos))
         throw std::invalid_argument("Expanded planning requires phase3 and a named objective profile.");
+    if (limits.enabled() && !civilization)
+        throw std::invalid_argument("Computational budgets require phase3.");
 
+    PlanningBudget clock(limits);
     benchmark::Measurements measurements;
     std::cout << "Dataset " << name << ", seed " << seed << ", mode " << mode << ": "
               << size.planets << " planets, " << size.routes << " routes, " << size.missions
               << " input missions\n";
     measurements.report("generation", 0, 0, true);
     auto data = benchmark::generate(size, seed);
-    if (scenario != "standard") {
+    if (scenario == "dynamic") {
+        Event request;
+        request.eventType = EventType::HighPriorityMission;
+        request.affectedObjectType = AffectedObjectType::Mission;
+        request.eventTime = 1;
+        request.urgentMission = data.missions.front();
+        request.urgentMission->id = size.missions + 10 * size.planets;
+        request.affectedObjectId = request.urgentMission->id;
+        request.urgentMission->priority += 10;
+        request.urgentMission->deadline = std::max(3.0, request.urgentMission->deadline);
+        data.events.push_back(request);
+    } else if (scenario != "standard") {
         data.events.clear();
         if (scenario == "scarcity") {
             for (auto& stock : data.inventory)
@@ -161,6 +176,51 @@ int runBenchmark(int argc, char* argv[]) {
     }
 
     const RouteWeights weights{0.02, 0.03, 0.5, 3.0, 2.0};
+    if (limits.enabled()) {
+        const auto result = CivilizationPlanner::anytime(data, legacy, expanded, objective, colonies,
+            budget, 30, weights, {}, clock, feasibilityAwareAllocator, indexedAid, reverseAidBounds, [&] {
+                auto allocation = ResourceAllocator::allocateWithRoutes(data.aidDemands, data.graph, weights,
+                    {}, experimentalAllocator);
+                return LogisticsPlanner::createMissions(allocation, data.aidDemands, ResourceType::Food, 24, size.missions);
+            });
+        std::cout << std::setprecision(12);
+        for (const auto& row : result.trace)
+            std::cout << "INCUMBENT," << row.seconds << ',' << row.legacyScore << ',' << row.expandedScore
+                      << ',' << row.scheduled << ',' << row.failed << ',' << row.unscheduled
+                      << ',' << row.timelyService << ',' << row.criticalShortage << ',' << row.shortage
+                      << ',' << row.unserved << ',' << row.transportation << ',' << row.fuel
+                      << ',' << row.waste << ',' << row.risk << '\n';
+        if (result.simulation) {
+            const auto& actual = *result.simulation;
+            auto old = legacy;
+            auto next = expanded;
+            for (const auto& request : actual.activatedUrgentMissions) {
+                old.addExternalObligation(request);
+                next.addExternalObligation(request);
+            }
+            const auto a = old.evaluate(actual, result.plan.construction);
+            const auto b = next.evaluate(actual, result.plan.construction);
+            std::cout << "ANYTIME_OUTCOME," << a.score << ',' << b.score << ',' << actual.completed << ','
+                      << actual.failed << ',' << (expandedObjective ? b.service : a.service) << ','
+                      << a.criticalEndingShortage << ',' << actual.remainingShortage << ',' << actual.stockoutAmount
+                      << ',' << actual.transportationCost << ',' << actual.fuel << ',' << actual.waste << ','
+                      << actual.risk << ',' << actual.eventsProcessed << '\n';
+            if (trace) {
+                AllocationResult used;
+                benchmark::reportResults(result.jobs, size.missions, result.jobs.size() - size.missions,
+                    used, result.plan.schedule, result.plan.construction, actual, 0, measurements, true, false, true);
+            }
+        }
+        const auto elapsed = clock.elapsed();
+        std::cout << "ANYTIME," << result.forecast.has_value() << ',' << result.planningComplete << ','
+                  << result.simulation.has_value() << ',' << (result.trace.empty() ? -1 : result.trace.front().seconds)
+                  << ',' << result.firstUseful.value_or(-1) << ',' << result.evaluated << ',' << result.accepted
+                  << ',' << result.interrupted << ',' << result.validationSeconds << ',' << clock.reserve()
+                  << ',' << elapsed << ',' << clock.peakBytes() << ',' << clock.reason() << ','
+                  << clock.exhaustedAt() << ',' << (limits.seconds ? std::max(0.0, elapsed - limits.seconds) : 0.0)
+                  << '\n';
+        return 0;
+    }
     measurements.report("allocation", 0, 0, true);
     auto allocation = feasibilityAwareAllocator ? AllocationResult{} : mode == "basic" ? ResourceAllocator::allocate(data.aidDemands) :
         ResourceAllocator::allocateWithRoutes(data.aidDemands, data.graph, weights,

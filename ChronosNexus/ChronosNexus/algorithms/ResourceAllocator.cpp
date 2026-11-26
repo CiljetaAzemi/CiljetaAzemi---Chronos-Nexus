@@ -1,4 +1,5 @@
 #include <unordered_map>
+#include "PlanningBudget.h"
 #include "ResourceAllocator.h"
 #include <cmath>
 #include <numeric>
@@ -120,6 +121,7 @@ AllocationResult ResourceAllocator::allocateWithRoutes(
     }
     size_t processed = 0;
     for (auto index : order) {
+        PlanningBudget::checkpoint();
         auto& receiver = planets[index];
         if (progress)
             progress(processed);
@@ -127,6 +129,7 @@ AllocationResult ResourceAllocator::allocateWithRoutes(
         auto& suppliers = donors[receiver.type];
         double shortage = receiver.required - receiver.available;
         while (shortage > 0 && !suppliers.empty()) {
+            PlanningBudget::checkpoint();
             PathResult path;
             if (benefitAware && firstPaths[index].found && suppliers.contains(firstPaths[index].path.back())) {
                 path = std::move(firstPaths[index]);

@@ -1,4 +1,5 @@
 #include "SimulationEngine.h"
+#include "../algorithms/PlanningBudget.h"
 #include "RecoveryPlanner.h"
 #include "../algorithms/CivilizationObjective.h"
 
@@ -61,11 +62,13 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
     bool recheckAllDepartures, double minimumHorizon, const std::vector<Event>* knownSupplyEvents,
     const SimulationObjective* scoring, const std::vector<ResourceDemand>* allocationNetwork, bool indexedAid,
     const AidRoutingOptions& aidRouting) {
+    PlanningBudget::checkpoint();
     SimulationResult result;
     result.scheduled = static_cast<int>(schedule.scheduled.size());
     GalaxyGraph active = galaxy;
     std::unordered_map<int, std::unordered_map<ResourceType, Balance>> balances;
     for (const auto& p : planets) {
+        PlanningBudget::checkpoint();
         if (!std::isfinite(p.available) || !std::isfinite(p.required) ||
             !std::isfinite(p.production) || !std::isfinite(p.consumption) ||
             !std::isfinite(p.storage) || p.available < 0 || p.required < 0 ||
@@ -331,6 +334,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                 std::tie(b.depletionTime, b.location, b.resource);
         });
         for (const auto& riskRow : risk) {
+            PlanningBudget::checkpoint();
             const Key key{riskRow.location, riskRow.resource};
             const auto before = forecast(key);
             if (!needsSupply(before))
@@ -365,6 +369,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
                 const auto started = std::chrono::steady_clock::now();
                 const double storage = balances.at(key.first).at(key.second).storage;
                 while (!donors.empty() && (needsSupply(residual) || residual.endingShortage > 0)) {
+                    PlanningBudget::checkpoint();
                     const auto [surplus, donor] = donors.top();
                     donors.pop();
                     while (nextPreventiveId < std::numeric_limits<int>::max() &&
@@ -676,6 +681,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
         predictAndPrevent(accounts, Event{});
     beforeFirstEvent = false;
     while (!queue.empty()) {
+        PlanningBudget::checkpoint();
         const auto action = queue.top();
         queue.pop();
         if (action.type == ActionType::Departure && !pending.contains(action.index))
@@ -903,6 +909,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
 
     now = std::max(now, minimumHorizon);
     for (auto& [location, resources] : balances) {
+        PlanningBudget::checkpoint();
         for (auto& [type, stock] : resources) {
             stock.advance(now, result);
             result.finalResources[location] += stock.stock;
