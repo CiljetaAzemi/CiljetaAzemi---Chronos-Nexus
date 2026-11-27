@@ -225,18 +225,27 @@ CivilizationMetrics CivilizationObjective::evaluateExpanded(const SimulationResu
     m.populationApplicable = populationWeight > 0;
     m.populationCoverage = populationWeight > 0 ? 1 - populationLoss / populationWeight : 0;
     m.security = resourceWeight > 0 ? 1 - resourceLoss / resourceWeight : 0;
-    double timely = 0, required = 0;
+    double timely = 0, required = 0, urgentTimely = 0, urgentRequired = 0;
     for (const auto& mission : obligations) {
         const double importance = std::max(1, mission.priority);
         if (!(largestCargo > 0) || !(mission.cargoAmount > 0))
             continue;
-        required += importance * (mission.cargoAmount / largestCargo);
+        const bool urgent = welfarePriority && urgentIds.contains(mission.id);
+        const double demand = importance * (mission.cargoAmount / largestCargo);
+        required += demand;
+        if (urgent)
+            urgentRequired += demand;
         if (const auto delivered = actual.deliveries.find(mission.id);
             delivered != actual.deliveries.end() && delivered->second.arrival <= mission.deadline)
-            if (std::isfinite(delivered->second.amount) && delivered->second.amount > 0)
-                timely += importance * (std::min(delivered->second.amount, mission.cargoAmount) / largestCargo);
+            if (std::isfinite(delivered->second.amount) && delivered->second.amount > 0) {
+                const double served = importance * (std::min(delivered->second.amount, mission.cargoAmount) / largestCargo);
+                timely += served;
+                if (urgent)
+                    urgentTimely += served;
+            }
     }
     m.service = required > 0 ? timely / required : 0;
+    m.urgentService = urgentRequired > 0 ? urgentTimely / urgentRequired : 0;
     m.missionLoss = required > 0 ? 1 - m.service : 0;
     std::unordered_set<int> selected;
     double projectCost = 0;
@@ -279,6 +288,18 @@ CivilizationMetrics CivilizationObjective::evaluateExpanded(const SimulationResu
     return m;
 }
 
+void CivilizationObjective::addUrgentObligation(const Mission& mission) {
+    addExternalObligation(mission);
+    if (welfarePriority)
+        urgentIds.insert(mission.id);
+}
+
+CivilizationObjective CivilizationObjective::withWelfarePriority() const {
+    auto copy = withSecurityPriority();
+    copy.welfarePriority = true;
+    return copy;
+}
+
 CivilizationObjective CivilizationObjective::withSecurityPriority() const {
     auto copy = *this;
     copy.securityPriority = true;
@@ -305,6 +326,13 @@ std::array<double, 5> CivilizationObjective::balancedKey(const CivilizationMetri
 
 bool CivilizationObjective::better(const CivilizationMetrics& candidate,
     const CivilizationMetrics& incumbent) const {
+    if (welfarePriority) {
+        const auto key = [](const CivilizationMetrics& m) {
+            return std::array{-m.criticalUnserved, m.populationCoverage, -m.criticalEndingShortage,
+                m.urgentService, m.service, m.score};
+        };
+        return key(candidate) > key(incumbent);
+    }
     if (bandBasisPoints)
         return balancedKey(candidate) > balancedKey(incumbent);
     if (securityPriority) {

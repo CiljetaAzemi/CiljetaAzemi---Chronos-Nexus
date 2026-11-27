@@ -10,8 +10,93 @@
 #include <map>
 #include <set>
 #include <tuple>
+#include <random>
+#include <fstream>
+#include <filesystem>
+#include <iostream>
+#include <iomanip>
+#include <deque>
+#include <numeric>
+#include <sstream>
+#include <cmath>
+#include <bit>
+#include "../third_party/nlohmann/json.hpp"
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace {
+using Json = nlohmann::json;
+
+Json bookingRows(const SchedulingResult& schedule) {
+    Json rows = Json::array();
+    for (const auto& s : schedule.scheduled)
+        rows.push_back(Json::array({s.missionId, s.spacecraftId, s.departureTime, s.arrivalTime, s.fuelUsed,
+            s.path, s.routeIds, {s.weights.distance, s.weights.fuel, s.weights.time, s.weights.risk, s.weights.reliability},
+            {s.estimate.earliestArrival, s.estimate.expectedArrival, s.estimate.latestArrival,
+                s.estimate.routeReliability, s.estimate.risk}}));
+    return rows;
+}
+
+Json missionRows(const std::vector<Mission>& jobs) {
+    Json rows = Json::array();
+    for (const auto& m : jobs)
+        rows.push_back(Json::array({m.id, m.origin, m.destination, static_cast<int>(m.cargoType), m.cargoAmount,
+            m.deadline, m.priority, m.importance, m.requirements.minCargoCapacity, m.requirements.minFuelCapacity,
+            m.requirements.minSpeed, m.requirements.minReliability}));
+    return rows;
+}
+
+Mission readMission(const Json& row) {
+    Mission m;
+    m.id = row.at(0); m.origin = row.at(1); m.destination = row.at(2);
+    const int type = row.at(3);
+    if (type < 0 || type > static_cast<int>(ResourceType::ConstructionMaterials))
+        throw std::runtime_error("Invalid checkpoint resource.");
+    m.cargoType = static_cast<ResourceType>(type); m.cargoAmount = row.at(4);
+    m.deadline = row.at(5); m.priority = row.at(6); m.importance = row.at(7);
+    m.requirements = {row.at(8), row.at(9), row.at(10), row.at(11)};
+    return m;
+}
+
+ScheduledMission readBooking(const Json& row) {
+    const auto& w = row.at(7);
+    const auto& f = row.at(8);
+    return {row.at(0), row.at(1), row.at(2), row.at(3), row.at(4), row.at(5), row.at(6),
+        {w.at(0), w.at(1), w.at(2), w.at(3), w.at(4)},
+        {f.at(0), f.at(1), f.at(2), f.at(3), f.at(4)}};
+}
+
+void replaceCheckpoint(const std::string& path, const Json& state) {
+    const std::filesystem::path target(path);
+    auto temporary = target;
+    temporary += ".tmp";
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        output << state;
+        output.close();
+        if (!output)
+            throw std::runtime_error("Cannot write optimization checkpoint.");
+    }
+#ifdef _WIN32
+    if (!MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        throw std::runtime_error("Cannot publish optimization checkpoint.");
+#else
+    std::filesystem::rename(temporary, target);
+#endif
+}
+
+double overall(const LongSearchOptions& config, const CivilizationMetrics& old,
+    const CivilizationMetrics& expanded, double seconds, size_t bytes) {
+    const double quality = (old.security + old.criticalSecurity + expanded.service + old.infrastructure) / 4;
+    const double burden = (expanded.transportPenalty + expanded.fuelPenalty + expanded.wastePenalty +
+        expanded.riskPenalty + expanded.constructionPenalty) / 5;
+    const auto& w = config.coefficients;
+    return w[0] * quality - w[1] * seconds / config.timeReference -
+        w[2] * static_cast<double>(bytes) / (1048576 * config.memoryReferenceMiB) - w[3] * burden;
+}
+
 struct ValidationTimer {
     double* total;
     PlanningBudget::Clock::time_point start = PlanningBudget::Clock::now();
@@ -54,7 +139,8 @@ std::vector<Event> CivilizationPlanner::constructionEvents(const std::vector<Inf
         e.eventType = EventType::ConstructionCompleted;
         e.affectedObjectType = AffectedObjectType::Planet;
         e.affectedObjectId = project->locationId;
-        e.eventTime = project->constructionTime;
+        const auto start = construction.startDays.find(id);
+        e.eventTime = project->constructionTime + (start == construction.startDays.end() ? 0 : start->second);
         e.severity = impact->second;
         result.push_back(e);
     }
@@ -313,7 +399,7 @@ AnytimePlan CivilizationPlanner::anytime(const benchmark::Scenario& data, const 
     const std::vector<Event>& knownProductionChanges, PlanningBudget& clock,
     bool coordinatedAllocator, bool indexedAid, bool reverseBounds,
     const std::function<std::vector<Mission>()>& proposeAid, bool proactiveSimulation,
-    std::optional<int> profileInitial) {
+    std::optional<int> profileInitial, const LongSearchOptions* longSearch) {
     AnytimePlan result;
     result.initialProfile.useWorkspace = profileInitial.value_or(0) > 0;
     result.initialProfile.pruneRoutes = profileInitial.value_or(0) > 1;
@@ -356,7 +442,7 @@ AnytimePlan CivilizationPlanner::anytime(const benchmark::Scenario& data, const 
             ++result.accepted;
     };
     auto replay = [&](const SchedulingResult& schedule, const InfrastructureOptimizationResult& construction,
-        const std::vector<Mission>& jobs) {
+        const std::vector<Mission>& jobs, CivilizationMetrics* evaluatedMetrics = nullptr) {
         PlanningBudget::checkpoint();
         ++result.evaluated;
         ValidationTimer timer{&result.validationSeconds};
@@ -366,12 +452,748 @@ AnytimePlan CivilizationPlanner::anytime(const benchmark::Scenario& data, const 
         const auto revised = withOrigins(jobs, schedule);
         auto forecast = SimulationEngine::run(data.graph, data.inventory, revised, data.ships, schedule,
             events, {}, false, horizon);
-        if (intact(schedule, revised, forecast))
+        const bool valid = intact(schedule, revised, forecast) && (!longSearch || !forecast.rerouted) &&
+            (!longSearch || !longSearch->neighborhoods ||
+                std::all_of(schedule.scheduled.begin(), schedule.scheduled.end(), [&](const auto& leg) {
+                    const auto delivery = forecast.deliveries.find(leg.missionId);
+                    return delivery != forecast.deliveries.end() &&
+                        std::abs(delivery->second.arrival - leg.arrivalTime) <= 1e-8;
+                }));
+        if (valid && evaluatedMetrics)
+            *evaluatedMetrics = objective.evaluate(forecast, construction);
+        if (valid)
             publish(schedule, construction, std::move(forecast), jobs);
+        return valid;
+    };
+
+    std::mt19937 random(longSearch ? longSearch->seed : 0);
+    std::array<size_t, 3> trials{}, wins{};
+    std::array<double, 3> costs{};
+    size_t iterations = 0, duplicates = 0, feasible = 0, evaluated = 0, improvements = 0;
+    Json pool = Json::array(), frontier;
+    std::unordered_set<std::string> columnKeys;
+    size_t poolBytes = 0, nextColumn = 0, partner = 0, masterTrials = 0, masterWins = 0;
+    size_t generated = 0, repeated = 0, capacityRejected = 0, compatibilityRejected = 0, throttled = 0;
+    const auto columnKey = [](Json column) {
+        for (auto& booking : column.at("bookings"))
+            booking.erase(booking.begin() + 7); // Nominal routing strategy is irrelevant after the route is fixed.
+        return column.dump();
+    };
+    double elapsedBefore = 0, lastReport = 0, peakOverall = -std::numeric_limits<double>::infinity();
+    std::ofstream progress;
+    if (longSearch && !longSearch->progress.empty()) {
+        const bool append = longSearch->resume && std::filesystem::exists(longSearch->progress);
+        progress.open(longSearch->progress, append ? std::ios::app : std::ios::trunc);
+        if (!progress)
+            throw std::runtime_error("Cannot open optimization progress file.");
+        if (!append)
+            progress << "seconds,remaining_seconds,iterations,duplicates,feasible,improvements,operator,legacy,expanded,overall,best_observed_overall,assigned,coverage,critical_ending,total_ending,unserved,service,transport,fuel,waste,risk,projects,construction,peak_bytes,last_improvement_seconds,checkpoint,evaluated,rejected,multi_start_trials,portfolio_trials,rebuild_trials,multi_start_wins,portfolio_wins,rebuild_wins,best_found_seconds\n";
+    }
+    const auto portfolio = [&](const std::vector<int>& ids) {
+        InfrastructureOptimizationResult build;
+        std::unordered_set<int> seen;
+        for (int id : ids) {
+            const auto p = std::find_if(data.projects.begin(), data.projects.end(),
+                [=](const Infrastructure& project) { return project.id == id; });
+            if (p == data.projects.end() || !seen.insert(id).second ||
+                p->status != ConstructionStatus::Proposed || !std::isfinite(p->constructionCost) ||
+                p->constructionCost < 0)
+                throw std::runtime_error("Invalid project in long-search portfolio.");
+            build.totalCost += p->constructionCost;
+            build.totalStrategicValue += p->strategicValue;
+            build.selectedInfrastructureIds.push_back(id);
+        }
+        return build;
+    };
+    const auto readPortfolio = [&](const Json& ids, const Json& starts) {
+        auto build = portfolio(ids.get<std::vector<int>>());
+        build.startDays = starts.get<std::unordered_map<int, double>>();
+        if (build.totalCost > budget)
+            throw std::runtime_error("Checkpoint exceeds construction budget.");
+        for (const auto& [id, day] : build.startDays) {
+            const auto project = std::find_if(data.projects.begin(), data.projects.end(),
+                [=](const auto& row) { return row.id == id; });
+            if (std::find(build.selectedInfrastructureIds.begin(), build.selectedInfrastructureIds.end(), id) ==
+                    build.selectedInfrastructureIds.end() || project == data.projects.end() ||
+                !std::isfinite(day) || day < 0 || day + project->constructionTime > horizon)
+                throw std::runtime_error("Invalid checkpoint construction timing.");
+        }
+        return build;
+    };
+    const auto addColumns = [&](const SchedulingResult& schedule, const std::vector<Mission>& jobs) {
+        std::map<int, SchedulingResult> chains;
+        std::unordered_map<int, const Mission*> byId;
+        for (const auto& job : jobs)
+            byId.emplace(job.id, &job);
+        for (const auto& leg : schedule.scheduled)
+            chains[leg.spacecraftId].scheduled.push_back(leg);
+        for (const auto& [ship, chain] : chains) {
+            ++generated;
+            std::vector<Mission> manifests;
+            for (const auto& leg : chain.scheduled)
+                manifests.push_back(*byId.at(leg.missionId));
+            Json column{{"ship", ship}, {"bookings", bookingRows(chain)}, {"jobs", missionRows(manifests)}};
+            auto key = columnKey(column);
+            if (columnKeys.contains(key))
+                ++repeated;
+            else if (poolBytes + key.size() > 8 * 1024 * 1024)
+                ++capacityRejected;
+            else {
+                columnKeys.insert(key);
+                poolBytes += key.size();
+                pool.push_back(std::move(column));
+            }
+        }
+    };
+    auto report = [&](const char* strategy, bool force) {
+        const double elapsed = clock.elapsed();
+        if (!longSearch || !result.forecast || (!force && elapsed - lastReport < longSearch->reportSeconds))
+            return;
+        lastReport = elapsed;
+        const auto& sample = result.trace.back();
+        const auto a = legacy.evaluate(*result.forecast, result.plan.construction);
+        const auto b = expanded.evaluate(*result.forecast, result.plan.construction);
+        const auto peak = clock.peakBytes();
+        const double score = overall(*longSearch, a, b, elapsed + elapsedBefore, peak);
+        peakOverall = std::max(peakOverall, score);
+        if (!longSearch->checkpoint.empty() && !longSearch->replayOnly) {
+            std::ostringstream rng;
+            rng << random;
+            replaceCheckpoint(longSearch->checkpoint, {{"version", 1}, {"identity", longSearch->identity},
+                {"elapsed", elapsed + elapsedBefore}, {"remaining", clock.remaining()}, {"rng", rng.str()},
+                {"iterations", iterations}, {"duplicates", duplicates}, {"feasible", feasible}, {"trials", trials},
+                {"evaluated", evaluated}, {"improvements", improvements},
+                {"wins", wins}, {"costs", costs}, {"best_overall", peakOverall},
+                {"jobs", missionRows(result.jobs)}, {"bookings", bookingRows(result.plan.schedule)},
+                {"projects", result.plan.construction.selectedInfrastructureIds}, {"legacy_score", a.score},
+                {"expanded_score", b.score}, {"start_days", result.plan.construction.startDays},
+                {"pool", pool}, {"frontier", frontier}, {"next_column", nextColumn}, {"partner", partner},
+                {"master_trials", masterTrials}, {"master_wins", masterWins},
+                {"generated", generated}, {"repeated", repeated}, {"capacity_rejected", capacityRejected},
+                {"compatibility_rejected", compatibilityRejected}, {"throttled", throttled}});
+        }
+        std::cout << std::setprecision(10) << "LONG_SEARCH," << elapsed + elapsedBefore << ',' << clock.remaining()
+                  << ',' << iterations << ',' << duplicates << ',' << feasible << ',' << strategy
+                  << ',' << result.plan.forecastScore << ',' << score << ',' << sample.scheduled << ','
+                  << sample.essentialCoverage << ',' << sample.criticalShortage << ',' << peak << std::endl;
+        if (longSearch->expandingHybrid)
+            std::cout << "EXPANDING_MASTER," << elapsed + elapsedBefore << ',' << pool.size() << ','
+                      << poolBytes << ',' << nextColumn << ',' << partner << ',' << masterTrials << ','
+                      << masterWins << ',' << result.plan.forecastScore << ',' << generated << ',' << repeated
+                      << ',' << capacityRejected << ',' << compatibilityRejected << ',' << throttled << std::endl;
+        if (progress.is_open()) {
+            progress << std::setprecision(15) << elapsed + elapsedBefore << ',' << clock.remaining() << ','
+                << iterations << ',' << duplicates << ',' << feasible << ',' << improvements << ',' << strategy
+                << ',' << a.score << ',' << b.score << ',' << score << ',' << peakOverall << ','
+                << data.missions.size() - sample.unscheduled << ',' << sample.essentialCoverage << ','
+                << sample.criticalShortage << ',' << sample.shortage << ',' << sample.unserved << ','
+                << sample.timelyService << ',' << sample.transportation << ',' << sample.fuel << ',' << sample.waste
+                << ',' << sample.risk << ',' << result.plan.construction.selectedInfrastructureIds.size() << ','
+                << result.plan.construction.totalCost << ',' << peak << ',' << elapsed - sample.seconds << ','
+                << !longSearch->checkpoint.empty() << ',' << evaluated << ',' << evaluated - feasible;
+            for (auto total : trials)
+                progress << ',' << total;
+            for (auto total : wins)
+                progress << ',' << total;
+            progress << ',' << elapsedBefore + sample.seconds << std::endl;
+        }
+    };
+    auto restore = [&] {
+        std::ifstream file(longSearch->checkpoint, std::ios::binary);
+        if (!file)
+            throw std::runtime_error("Cannot open optimization checkpoint.");
+        Json state;
+        file >> state;
+        if (state.at("version") != 1 || state.at("identity") != longSearch->identity)
+            throw std::runtime_error("Optimization checkpoint is incompatible with this run.");
+        std::vector<Mission> jobs;
+        for (const auto& row : state.at("jobs")) {
+            Mission m;
+            m.id = row.at(0); m.origin = row.at(1); m.destination = row.at(2);
+            const int type = row.at(3);
+            if (type < 0 || type > static_cast<int>(ResourceType::ConstructionMaterials))
+                throw std::runtime_error("Invalid checkpoint resource.");
+            m.cargoType = static_cast<ResourceType>(type); m.cargoAmount = row.at(4);
+            m.deadline = row.at(5); m.priority = row.at(6); m.importance = row.at(7);
+            m.requirements = {row.at(8), row.at(9), row.at(10), row.at(11)};
+            jobs.push_back(m);
+        }
+        std::unordered_map<int, size_t> ids;
+        for (size_t i = 0; i < jobs.size(); ++i)
+            if (!ids.emplace(jobs[i].id, i).second)
+                throw std::runtime_error("Duplicate checkpoint mission.");
+        for (const auto& original : data.missions) {
+            const auto& restored = jobs.at(ids.at(original.id));
+            if (missionRows({restored}) != missionRows({original}))
+                throw std::runtime_error("Checkpoint changed an external obligation.");
+        }
+        SchedulingResult schedule;
+        std::unordered_set<int> assigned;
+        for (const auto& row : state.at("bookings")) {
+            const int id = row.at(0);
+            if (!ids.contains(id) || !assigned.insert(id).second)
+                throw std::runtime_error("Invalid checkpoint assignment ID.");
+            const auto& w = row.at(7);
+            const auto& f = row.at(8);
+            schedule.scheduled.push_back({id, row.at(1), row.at(2), row.at(3), row.at(4), row.at(5), row.at(6),
+                {w.at(0), w.at(1), w.at(2), w.at(3), w.at(4)},
+                {f.at(0), f.at(1), f.at(2), f.at(3), f.at(4)}});
+        }
+        schedule.missionsScheduled = static_cast<int>(schedule.scheduled.size());
+        auto construction = portfolio(state.at("projects").get<std::vector<int>>());
+        if (longSearch->expandingHybrid) {
+            construction = readPortfolio(state.at("projects"), state.at("start_days"));
+            pool = state.at("pool");
+            frontier = state.at("frontier");
+            nextColumn = state.at("next_column"); partner = state.at("partner");
+            masterTrials = state.at("master_trials"); masterWins = state.at("master_wins");
+            generated = state.at("generated"); repeated = state.at("repeated");
+            capacityRejected = state.at("capacity_rejected");
+            compatibilityRejected = state.at("compatibility_rejected"); throttled = state.at("throttled");
+            if (!pool.is_array() || nextColumn > pool.size() || partner > std::bit_width(nextColumn) ||
+                (nextColumn == pool.size() && (!frontier.is_null() || partner)))
+                throw std::runtime_error("Invalid expanding master checkpoint cursor.");
+            for (const auto& col : pool) {
+                auto key = columnKey(col);
+                poolBytes += key.size();
+                if (poolBytes > 8 * 1024 * 1024 || !columnKeys.insert(std::move(key)).second)
+                    throw std::runtime_error("Invalid expanding master checkpoint pool.");
+            }
+        }
+        if (construction.totalCost > budget)
+            throw std::runtime_error("Checkpoint exceeds construction budget.");
+        elapsedBefore = state.at("elapsed");
+        iterations = state.at("iterations"); duplicates = state.at("duplicates"); feasible = state.at("feasible");
+        evaluated = state.at("evaluated"); improvements = state.at("improvements");
+        if (feasible > evaluated || improvements > feasible)
+            throw std::runtime_error("Invalid checkpoint evaluation counts.");
+        trials = state.at("trials"); wins = state.at("wins"); costs = state.at("costs");
+        peakOverall = state.at("best_overall");
+        std::istringstream rng(state.at("rng").get<std::string>());
+        if (!(rng >> random) || elapsedBefore < 0 || !std::isfinite(elapsedBefore))
+            throw std::runtime_error("Invalid checkpoint search state.");
+        replay(schedule, construction, jobs);
+        if (!result.forecast)
+            throw std::runtime_error("Checkpoint plan failed nominal replay.");
+    };
+    auto masterStep = [&] {
+        if (nextColumn == pool.size())
+            return;
+        if (frontier.is_null()) {
+            frontier = {{"jobs", missionRows(result.jobs)}, {"bookings", bookingRows(result.plan.schedule)},
+                {"projects", result.plan.construction.selectedInfrastructureIds},
+                {"start_days", result.plan.construction.startDays}};
+        }
+        const auto& first = pool.at(nextColumn);
+        // Compare geometrically spaced ages so the frontier can reach newly
+        // discovered columns before spending all its time on old pairs.
+        const size_t pairCount = std::bit_width(nextColumn);
+        // Include the earliest column even when the oldest dyadic offset falls short.
+        const Json* second = partner ? &pool.at(partner == pairCount ? 0 :
+            nextColumn - (size_t{1} << (partner - 1))) : nullptr;
+        const int ship = first.at("ship");
+        const int other = second ? second->at("ship").get<int>() : ship;
+        const auto advance = [&] {
+            if (++partner > pairCount) {
+                ++nextColumn;
+                partner = 0;
+                frontier = nullptr;
+            }
+        };
+        if (second && ship == other) {
+            ++compatibilityRejected;
+            advance();
+            return;
+        }
+        SchedulingResult candidate;
+        std::unordered_set<int> assigned;
+        std::map<int, Mission> manifests;
+        for (const auto& row : frontier.at("jobs")) {
+            auto job = readMission(row);
+            manifests.emplace(job.id, std::move(job));
+        }
+        for (const auto& row : frontier.at("bookings")) {
+            auto leg = readBooking(row);
+            if (leg.spacecraftId != ship && leg.spacecraftId != other) {
+                assigned.insert(leg.missionId);
+                candidate.scheduled.push_back(std::move(leg));
+            }
+        }
+        for (const Json* column : {&first, second}) {
+            if (!column)
+                continue;
+            for (const auto& row : column->at("bookings")) {
+                auto leg = readBooking(row);
+                if (!assigned.insert(leg.missionId).second) {
+                    ++compatibilityRejected;
+                    advance();
+                    return;
+                }
+                candidate.scheduled.push_back(std::move(leg));
+            }
+            for (const auto& row : column->at("jobs")) {
+                auto job = readMission(row);
+                manifests.insert_or_assign(job.id, std::move(job));
+            }
+        }
+        std::vector<Mission> jobs;
+        for (auto& [id, job] : manifests)
+            jobs.push_back(std::move(job));
+        candidate.missionsScheduled = static_cast<int>(candidate.scheduled.size());
+        const auto build = readPortfolio(frontier.at("projects"), frontier.at("start_days"));
+        const auto before = result.trace.size();
+        const bool valid = replay(candidate, build, jobs);
+        ++evaluated;
+        ++masterTrials;
+        feasible += valid;
+        advance();
+        if (result.trace.size() > before) {
+            ++improvements;
+            ++masterWins;
+            report("master-improved", true);
+        }
+    };
+    auto explore = [&] {
+        // A bounded recent set suppresses repeated replays without retaining plans.
+        std::unordered_set<size_t> recent;
+        std::deque<size_t> order;
+        const std::vector<Mission> noAid;
+        const InventoryPlanningInput input{data.inventory, data.aidDemands, noAid};
+        std::vector<int> projects;
+        auto current = result.plan;
+        auto currentJobs = result.jobs;
+        size_t stagnant = 0, escapes = 0, downhill = 0;
+        std::unordered_map<int, const Spacecraft*> carriers;
+        std::unordered_map<int, std::vector<const Spacecraft*>> initialCarriers;
+        for (const auto& ship : data.ships)
+            carriers.emplace(ship.id, &ship);
+        if (longSearch->neighborhoods)
+            for (const auto& ship : data.ships)
+                initialCarriers[ship.currentLocation].push_back(&ship);
+        for (const auto& project : data.projects)
+            if (project.status == ConstructionStatus::Proposed && project.constructionCost >= 0 &&
+                project.constructionCost <= budget && project.constructionTime <= horizon)
+                projects.push_back(project.id);
+        if (data.missions.empty() && projects.empty())
+            return;
+        report("seed", true);
+        if (longSearch->expandingHybrid && pool.empty())
+            addColumns(result.plan.schedule, result.jobs);
+        if (data.missions.empty() && projects.size() == 1) {
+            for (const auto& ids : {std::vector<int>{}, projects}) {
+                ++iterations;
+                ++evaluated;
+                if (replay({}, portfolio(ids), data.missions))
+                    ++feasible;
+            }
+            return;
+        }
+        while (true) {
+            PlanningBudget::checkpoint();
+            if (longSearch->expandingHybrid) {
+                masterStep();
+                // Drain accumulated work before generating another batch. A
+                // full validated proposal can still publish before admission.
+                if (pool.size() - nextColumn > std::max<size_t>(32, data.ships.size() * 2)) {
+                    ++throttled;
+                    continue;
+                }
+            }
+            size_t op = iterations % trials.size();
+            // Every fourth attempt is reserved for exploration. Other attempts
+            // prefer operators that have improved the incumbent per unit time.
+            if (longSearch->adaptive) {
+                if (longSearch->neighborhoods && stagnant >= 64 + data.missions.size())
+                    op = iterations % trials.size();
+                else if (iterations % 4 == 0)
+                    op = (iterations / 4) % trials.size();
+                else {
+                    op = 0;
+                    for (size_t i = 1; i < trials.size(); ++i)
+                        if (wins[i] / (1 + costs[i]) > wins[op] / (1 + costs[op]))
+                            op = i;
+                }
+            }
+            const auto start = PlanningBudget::Clock::now();
+            ++iterations;
+            ++trials[op];
+            ++stagnant;
+            const bool restart = longSearch->neighborhoods &&
+                stagnant % (64 + data.missions.size()) == 0;
+            if (restart && stagnant % (2 * (64 + data.missions.size())) == 0) {
+                current = result.plan;
+                currentJobs = result.jobs;
+            }
+            const auto& base = longSearch->neighborhoods ? current : result.plan;
+            auto construction = base.construction;
+            auto jobs = longSearch->neighborhoods ? currentJobs : result.jobs;
+            SchedulingResult schedule;
+            if (longSearch->neighborhoods && !restart && op != 1 && !base.schedule.scheduled.empty()) {
+                schedule = base.schedule;
+                const size_t radius = std::min(schedule.scheduled.size(), size_t{1} +
+                    static_cast<size_t>(std::log2(1.0 + stagnant / (64.0 + data.missions.size()))));
+                const size_t count = 1 + random() % radius;
+                for (size_t move = 0; move < count; ++move) {
+                    PlanningBudget::checkpoint();
+                    auto& leg = schedule.scheduled[random() % schedule.scheduled.size()];
+                    const auto job = std::find_if(jobs.begin(), jobs.end(),
+                        [&](const Mission& m) { return m.id == leg.missionId; });
+                    if (job == jobs.end())
+                        continue;
+                    const bool generated = std::none_of(data.missions.begin(), data.missions.end(),
+                        [&](const Mission& m) { return m.id == job->id; });
+                    auto shipment = *job;
+                    auto ship = carriers.at(leg.spacecraftId);
+                    auto route = leg.weights;
+                    double depart = leg.departureTime;
+                    switch (random() % 4) {
+                    case 0:
+                        route = random() % 2 ? RouteWeights{0, 1, 0} : RouteWeights{0, 0, 1};
+                        break;
+                    case 1:
+                        depart = std::max(0.0, depart + (static_cast<int>(random() % 9) - 4) * .25);
+                        break;
+                    case 2:
+                        if (const auto local = initialCarriers.find(shipment.origin);
+                            local != initialCarriers.end())
+                            ship = local->second[random() % local->second.size()];
+                        break;
+                    case 3:
+                        if (generated) {
+                            shipment.cargoAmount *= longSearch->expandingHybrid ?
+                                .5 + std::generate_canonical<double, 32>(random) :
+                                .5 + (random() % 5) * .25;
+                            if (random() % 2 && !data.aidDemands.empty()) {
+                                const auto& donor = data.aidDemands[random() % data.aidDemands.size()];
+                                if (donor.type == shipment.cargoType && donor.available > donor.required &&
+                                    donor.planetId != shipment.destination) {
+                                    const auto other = std::find_if(data.ships.begin(), data.ships.end(),
+                                        [&](const Spacecraft& s) { return s.currentLocation == donor.planetId; });
+                                    if (other != data.ships.end()) {
+                                        shipment.origin = donor.planetId;
+                                        ship = &*other;
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    PathResult path;
+                    if (route.distance == leg.weights.distance && route.fuel == leg.weights.fuel &&
+                        route.time == leg.weights.time && route.risk == leg.weights.risk &&
+                        route.reliability == leg.weights.reliability && shipment.origin == job->origin) {
+                        path.path = leg.path;
+                        path.routeIds = leg.routeIds;
+                        path.found = Dijkstra::measure(data.graph, leg.routeIds, shipment.origin,
+                            shipment.destination, shipment.cargoAmount, path.metrics);
+                    } else {
+                        path = Dijkstra::findShortestPath(data.graph, shipment.origin, shipment.destination,
+                            route, shipment.cargoAmount);
+                    }
+                    auto projected = *ship;
+                    projected.currentLocation = shipment.origin;
+                    double arrival;
+                    if (path.found && MissionScheduler::feasible(shipment, projected, depart, path.metrics, arrival)) {
+                        *job = std::move(shipment);
+                        leg = {leg.missionId, ship->id, depart, arrival, path.metrics.fuel, path.path, path.routeIds,
+                            route, FlightEstimate::from(path.metrics, depart, ship->speed)};
+                        schedule.revisedOrigins.erase(leg.missionId);
+                    }
+                }
+                if (longSearch->expandingHybrid && op == 2 && schedule.scheduled.size() > 1) {
+                    const auto isExternal = [&](int id) {
+                        return std::any_of(data.missions.begin(), data.missions.end(),
+                            [=](const Mission& m) { return m.id == id; });
+                    };
+                    const size_t index = random() % schedule.scheduled.size();
+                    auto& leg = schedule.scheduled[index];
+                    auto first = std::find_if(jobs.begin(), jobs.end(),
+                        [&](const Mission& m) { return m.id == leg.missionId; });
+                    if (first != jobs.end() && !isExternal(first->id)) {
+                        const size_t otherIndex = random() % schedule.scheduled.size();
+                        const auto otherId = schedule.scheduled[otherIndex].missionId;
+                        const auto second = std::find_if(jobs.begin(), jobs.end(),
+                            [=](const Mission& m) { return m.id == otherId; });
+                        if (index != otherIndex && second != jobs.end() && !isExternal(otherId) &&
+                            first->origin == second->origin && first->destination == second->destination &&
+                            first->cargoType == second->cargoType && first->deadline == second->deadline) {
+                            first->cargoAmount += second->cargoAmount;
+                            schedule.scheduled.erase(schedule.scheduled.begin() + otherIndex);
+                            jobs.erase(second);
+                        } else if (const auto locally = initialCarriers.find(first->origin);
+                            locally != initialCarriers.end()) {
+                            const auto* ship = locally->second[random() % locally->second.size()];
+                            if (ship->id != leg.spacecraftId) {
+                                Mission part = *first;
+                                part.id = LogisticsPlanner::firstAvailableMissionId(jobs, data.events);
+                                part.cargoAmount *= .25 + .5 * std::generate_canonical<double, 32>(random);
+                                const auto path = Dijkstra::findShortestPath(data.graph, part.origin,
+                                    part.destination, leg.weights, part.cargoAmount);
+                                double arrival;
+                                const double depart = std::max(leg.departureTime, ship->availableAt);
+                                if (path.found && MissionScheduler::feasible(part, *ship, depart, path.metrics, arrival)) {
+                                    first->cargoAmount -= part.cargoAmount;
+                                    schedule.scheduled.push_back({part.id, ship->id, depart, arrival, path.metrics.fuel,
+                                        path.path, path.routeIds, leg.weights,
+                                        FlightEstimate::from(path.metrics, depart, ship->speed)});
+                                    jobs.push_back(part);
+                                }
+                            }
+                        }
+                        schedule.missionsScheduled = static_cast<int>(schedule.scheduled.size());
+                    }
+                }
+            } else if (op == 1 && !projects.empty() && !restart) {
+                auto ids = construction.selectedInfrastructureIds;
+                const auto pick = projects[random() % projects.size()];
+                if (auto it = std::find(ids.begin(), ids.end(), pick); it != ids.end())
+                    ids.erase(it);
+                else {
+                    ids.push_back(pick);
+                    while (ids.size() > 1 && portfolio(ids).totalCost > budget)
+                        ids.erase(ids.begin() + random() % (ids.size() - 1));
+                }
+                construction = portfolio(ids);
+                if (longSearch->expandingHybrid && !ids.empty() && random() % 2) {
+                    construction.startDays = base.construction.startDays;
+                    std::erase_if(construction.startDays,
+                        [&](const auto& row) { return std::find(ids.begin(), ids.end(), row.first) == ids.end(); });
+                    const int id = ids[random() % ids.size()];
+                    const auto p = std::find_if(data.projects.begin(), data.projects.end(),
+                        [=](const auto& project) { return project.id == id; });
+                    if (p != data.projects.end() && p->constructionTime <= horizon)
+                        construction.startDays[id] = (horizon - p->constructionTime) *
+                            std::generate_canonical<double, 32>(random);
+                }
+                schedule = base.schedule;
+            } else {
+                auto candidates = op == 0 ? jobs : data.missions;
+                std::shuffle(candidates.begin(), candidates.end(), random);
+                if (op == 2 && !candidates.empty()) {
+                    // Coordinated destruction exposes alternatives to a greedy
+                    // chain that always starts from the same high-benefit jobs.
+                    const auto remove = random() % (candidates.size() + 1);
+                    candidates.resize(candidates.size() - remove);
+                }
+                auto route = weights;
+                if (op == 2) {
+                    route.fuel += (random() % 8) * .125;
+                    route.time += (random() % 8) * .125;
+                }
+                InitialSchedulingProfile indexed;
+                indexed.useWorkspace = indexed.pruneRoutes = true;
+                schedule = MissionScheduler::schedule(std::move(candidates), data.ships, data.graph, route,
+                    false, {}, &input, true, {}, &indexed, true);
+                if (op != 0)
+                    jobs = data.missions;
+            }
+            auto sortedProjects = construction.selectedInfrastructureIds;
+            std::sort(sortedProjects.begin(), sortedProjects.end());
+            auto bookings = bookingRows(schedule);
+            if (longSearch->neighborhoods) {
+                // Keep event ordering for simultaneous bookings. Route weights
+                // matter to future repair but cannot change this nominal replay.
+                for (auto& row : bookings)
+                    row.erase(row.begin() + 7);
+            }
+            const auto signature = std::hash<std::string>{}(
+                Json::array({bookings, sortedProjects, missionRows(jobs), construction.startDays}).dump());
+            if (recent.insert(signature).second) {
+                order.push_back(signature);
+                if (order.size() > 16384) {
+                    recent.erase(order.front());
+                    order.pop_front();
+                }
+                const auto before = result.trace.size();
+                CivilizationMetrics metrics{};
+                const bool valid = replay(schedule, construction, jobs, &metrics);
+                ++evaluated;
+                if (valid)
+                    ++feasible;
+                if (valid && longSearch->expandingHybrid)
+                    addColumns(schedule, withOrigins(jobs, schedule));
+                if (result.trace.size() > before) {
+                    if (downhill && stagnant > 1)
+                        ++escapes;
+                    stagnant = downhill = 0;
+                    ++wins[op];
+                    ++improvements;
+                    if (longSearch->neighborhoods)
+                        std::cout << "NEIGHBORHOOD_IMPROVEMENT," << iterations << ',' << escapes << '\n';
+                    report("improved", true);
+                }
+                if (valid && longSearch->neighborhoods) {
+                    const bool better = objective.better(metrics, current.forecastMetrics);
+                    const double loss = std::max(0.0, current.forecastScore - metrics.score);
+                    const double temperature = std::min(1.0, .05 + .05 * stagnant / (64 + data.missions.size()));
+                    const bool exploratory = longSearch->acceptWorse &&
+                        std::generate_canonical<double, 32>(random) < std::exp(-loss / temperature) *
+                            (objective.prioritizesSecurity() ? .05 : .5);
+                    if (better || exploratory) {
+                        downhill += !better;
+                        current.schedule = std::move(schedule);
+                        current.construction = std::move(construction);
+                        current.forecastMetrics = metrics;
+                        current.forecastScore = metrics.score;
+                        currentJobs = withOrigins(std::move(jobs), current.schedule);
+                    }
+                }
+            } else {
+                ++duplicates;
+            }
+            costs[op] += std::chrono::duration<double>(PlanningBudget::Clock::now() - start).count();
+            report(op == 0 ? "multi-start" : op == 1 ? "portfolio" : "destroy-rebuild", false);
+        }
+    };
+
+    auto exactHybrid = [&] {
+        // Fix the menu at entry. A column is an entire spacecraft itinerary,
+        // with concrete ship, departure times and routes.
+        const auto seed = result.plan.schedule;
+        const auto jobs = result.jobs;
+        using Chain = std::vector<ScheduledMission>;
+        std::map<int, std::vector<Chain>> columns;
+        std::unordered_set<int> seedShips;
+        for (const auto& leg : seed.scheduled) {
+            seedShips.insert(leg.spacecraftId);
+            auto& menu = columns[leg.spacecraftId];
+            if (menu.empty())
+                menu.emplace_back();
+            menu.front().push_back(leg);
+        }
+        const std::vector<Mission> noAid;
+        const InventoryPlanningInput input{data.inventory, data.aidDemands, noAid};
+        InitialSchedulingProfile profile;
+        profile.useWorkspace = profile.pruneRoutes = true;
+        for (const auto& strategy : {RouteWeights{0, 1, 0}, RouteWeights{0, 0, 1}}) {
+            auto alternative = MissionScheduler::schedule(jobs, data.ships, data.graph, strategy,
+                false, {}, &input, true, {}, &profile);
+            std::map<int, Chain> grouped;
+            for (auto& leg : alternative.scheduled)
+                grouped[leg.spacecraftId].push_back(std::move(leg));
+            for (auto& [ship, chain] : grouped) {
+                auto& menu = columns[ship];
+                const auto same = [&](const Chain& other) {
+                    return chain.size() == other.size() &&
+                        std::equal(chain.begin(), chain.end(), other.begin(), [](const auto& a, const auto& b) {
+                            return a.missionId == b.missionId && a.departureTime == b.departureTime &&
+                                a.arrivalTime == b.arrivalTime && a.routeIds == b.routeIds;
+                        });
+                };
+                if (std::none_of(menu.begin(), menu.end(), same))
+                    menu.push_back(std::move(chain));
+            }
+        }
+        std::vector<const std::vector<Chain>*> menus;
+        for (auto& [ship, menu] : columns) {
+            if (seedShips.contains(ship)) {
+                auto prefix = menu.front();
+                while (prefix.size() > 1) {
+                    prefix.pop_back();
+                    const auto samePrefix = [&](const Chain& other) {
+                        return other.size() == prefix.size() &&
+                            std::equal(other.begin(), other.end(), prefix.begin(), [](const auto& a, const auto& b) {
+                                return a.missionId == b.missionId && a.departureTime == b.departureTime &&
+                                    a.arrivalTime == b.arrivalTime && a.routeIds == b.routeIds;
+                            });
+                    };
+                    if (std::none_of(menu.begin(), menu.end(), samePrefix))
+                        menu.push_back(prefix);
+                }
+            }
+            // A ship absent from the seed starts with the empty itinerary.
+            if (!seedShips.contains(ship))
+                menu.insert(menu.begin(), Chain{});
+            else
+                menu.emplace_back();
+            menus.push_back(&menu);
+        }
+        std::vector<int> projects;
+        for (const auto& p : data.projects)
+            if (p.status == ConstructionStatus::Proposed && p.constructionCost >= 0 && p.constructionCost <= budget)
+                projects.push_back(p.id);
+        SchedulingResult candidate;
+        std::unordered_set<int> used;
+        std::vector<int> selected;
+        size_t conflicts = 0, portfolios = 0;
+        report("exact-seed", true);
+        auto evaluatePortfolio = [&](auto&& self, size_t start) -> void {
+            PlanningBudget::checkpoint();
+            const auto build = portfolio(selected);
+            if (build.totalCost > budget) {
+                ++conflicts;
+                return;
+            }
+            ++iterations;
+            ++portfolios;
+            const auto before = result.trace.size();
+            if (replay(candidate, build, jobs))
+                ++feasible;
+            ++evaluated;
+            if (result.trace.size() != before) {
+                ++improvements;
+                report("exact-improved", true);
+            }
+            report("exact-enumeration", false);
+            for (size_t i = start; i < projects.size(); ++i) {
+                selected.push_back(projects[i]);
+                self(self, i + 1);
+                selected.pop_back();
+            }
+        };
+        auto combine = [&](auto&& self, size_t index, size_t edits) -> void {
+            PlanningBudget::checkpoint();
+            if (edits > menus.size() - index)
+                return;
+            if (index == menus.size()) {
+                candidate.missionsScheduled = static_cast<int>(candidate.scheduled.size());
+                evaluatePortfolio(evaluatePortfolio, 0);
+                return;
+            }
+            const auto& menu = *menus[index];
+            for (size_t choice = 0; choice < menu.size(); ++choice) {
+                if (choice > 0 && !edits)
+                    break;
+                const auto& chain = menu[choice];
+                if (std::any_of(chain.begin(), chain.end(),
+                    [&](const auto& leg) { return used.contains(leg.missionId); })) {
+                    ++conflicts;
+                    continue;
+                }
+                const auto start = candidate.scheduled.size();
+                for (const auto& leg : chain) {
+                    used.insert(leg.missionId);
+                    candidate.scheduled.push_back(leg);
+                }
+                self(self, index + 1, edits - (choice != 0));
+                candidate.scheduled.resize(start);
+                for (const auto& leg : chain)
+                    used.erase(leg.missionId);
+            }
+        };
+        // Leave the general-purpose mode available for large inputs. The
+        // recursive exhaustive master is intended for Small scenarios.
+        if (menus.size() + projects.size() > 256)
+            throw std::invalid_argument("Exact hybrid requires at most 256 active ship and project decisions.");
+        try {
+            for (size_t depth = 0; depth <= menus.size(); ++depth) {
+                combine(combine, 0, depth);
+                std::cout << "EXACT_DEPTH," << depth << ',' << menus.size() << ',' << portfolios
+                          << ',' << conflicts << ',' << result.plan.forecastScore << std::endl;
+            }
+        } catch (const PlanningBudget::Interrupted&) {
+            std::cout << "EXACT_STATUS,interrupted," << portfolios << ',' << conflicts << std::endl;
+            throw;
+        }
+        std::cout << "EXACT_STATUS,restricted-exhausted," << portfolios << ',' << conflicts << std::endl;
     };
 
     SchedulingResult prefix;
     try {
+        if (longSearch && longSearch->resume) {
+            clock.stage("restore");
+            restore();
+        } else {
         clock.stage("initial-validation");
         replay({}, {}, data.missions);
         clock.stage("initial-scheduling");
@@ -407,7 +1229,10 @@ AnytimePlan CivilizationPlanner::anytime(const benchmark::Scenario& data, const 
         choose(std::move(initial), jobs, aid, data.inventory, data.aidDemands, data.ships, data.graph,
             data.projects, objective, colonies, budget, horizon, weights, knownProductionChanges,
             [&](const SchedulingResult& schedule, const InfrastructureOptimizationResult& construction,
-                SimulationResult&& forecast) { publish(schedule, construction, std::move(forecast), jobs); },
+                SimulationResult&& forecast) {
+                if (!longSearch || !forecast.rerouted)
+                    publish(schedule, construction, std::move(forecast), jobs);
+            },
             &result.validationSeconds, &result.evaluated);
 
         if (coordinatedAllocator && result.forecast) {
@@ -428,6 +1253,14 @@ AnytimePlan CivilizationPlanner::anytime(const benchmark::Scenario& data, const 
                 if (result.trace.size() != before)
                     result.coordinated = std::move(coordination);
             }
+        }
+        }
+        if (longSearch && result.forecast && !longSearch->replayOnly) {
+            clock.stage("long-search");
+            if (longSearch->exactHybrid)
+                exactHybrid();
+            else
+                explore();
         }
         result.planningComplete = true;
     } catch (const PlanningBudget::Interrupted&) {
@@ -464,5 +1297,19 @@ AnytimePlan CivilizationPlanner::anytime(const benchmark::Scenario& data, const 
     if (!result.forecast)
         for (const auto& job : data.missions)
             result.plan.schedule.rejectedMissionIds.push_back(job.id);
+    if (longSearch)
+        report("return", true);
+    if (longSearch && result.simulation) {
+        auto actualLegacy = legacy;
+        auto actualExpanded = expanded;
+        for (const auto& urgent : result.simulation->activatedUrgentMissions) {
+            actualLegacy.addExternalObligation(urgent);
+            actualExpanded.addExternalObligation(urgent);
+        }
+        const auto a = actualLegacy.evaluate(*result.simulation, result.plan.construction);
+        const auto b = actualExpanded.evaluate(*result.simulation, result.plan.construction);
+        std::cout << "LONG_REALIZED_OVERALL," << overall(*longSearch, a, b,
+            elapsedBefore + clock.elapsed(), clock.peakBytes()) << '\n';
+    }
     return result;
 }

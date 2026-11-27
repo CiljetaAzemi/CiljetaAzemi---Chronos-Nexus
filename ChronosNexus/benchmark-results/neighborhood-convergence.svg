@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="665" font-family="Arial"><rect width="800" height="665" fill="white"/><text x="30" y="30" font-size="20">Validated nominal Legacy incumbent by elapsed seconds</text>
+<text x="30" y="54" font-size="13">medium-20270105-production-cut</text>
+<path d="M 75 60 V 150 H 740" fill="none" stroke="#cccccc"/>
+<text x="30" y="60" font-size="10">61.040</text><text x="30" y="150" font-size="10">61.030</text><text x="715" y="166" font-size="10">4.3 s</text>
+<polyline points="130.89,150 143.48,141.72 221.69,141.72 300.15,141.72 378.38,141.72 457.13,141.72 535.68,141.72 614.44,141.72 636.52,60 714.74,60 740,60" fill="none" stroke="#156b89" stroke-width="2"/><text x="250" y="54" fill="#156b89" font-size="11">neighborhood</text>
+<polyline points="129.06,150 167.77,142.28 202.71,139.91 240.29,132.56 252.39,131.46 286.62,131.27 323.67,126.91 346.58,118.62 354.97,118.07 369.93,117.37 411.87,116.07 457.16,100.61 536.1,100.61 541.29,90.14 572.18,80.92 626.22,74.97 704.68,74.97 739.69,74.97" fill="none" stroke="#a64e15" stroke-width="2"/><text x="365" y="54" fill="#a64e15" font-size="11">neighborhood-greedy</text>
+<text x="30" y="204" font-size="13">small-20261228-standard</text>
+<path d="M 75 210 V 300 H 740" fill="none" stroke="#cccccc"/>
+<text x="30" y="210" font-size="10">59.094</text><text x="30" y="300" font-size="10">58.787</text><text x="715" y="316" font-size="10">4.3 s</text>
+<polyline points="76.61,300 85.13,297.73 91.57,296.07 119.47,270.08 127.68,258.14 144.68,257.81 146.44,257.56 147.38,254.9 152.77,254.71 155.88,254.61 157.57,252.22 198.75,252.01 229.44,251.46 255.64,250.32 297.41,247.37 375.68,247.37 438.65,247.3 451.95,245.79 460.64,245.51 463.89,244.97 496.33,244.66 574.56,244.66 631.85,244.4 710.08,244.4 739.99,244.4" fill="none" stroke="#156b89" stroke-width="2"/><text x="250" y="204" fill="#156b89" font-size="11">neighborhood</text>
+<polyline points="76.55,300 83.14,297.73 99.32,294.5 105.67,288.19 113.29,287.26 114.53,285.96 115.12,282.78 122.68,281.05 125.33,280.49 145.37,280.26 165.47,274.85 167.37,274.62 170.74,273.89 173.78,270.43 178.77,270.1 186.16,267.66 197.58,251.8 209.24,251.5 221.72,244.85 225.4,241.74 229.92,240.92 243.75,238.69 322,238.69 374.98,238.65 453.25,238.65 467.53,216.64 469.02,214.29 474.08,210.94 486.37,210.76 504.16,210.54 513.9,210 592.14,210 670.38,210 740,210" fill="none" stroke="#a64e15" stroke-width="2"/><text x="365" y="204" fill="#a64e15" font-size="11">neighborhood-greedy</text>
+<text x="30" y="354" font-size="13">small-20261230-scarcity</text>
+<path d="M 75 360 V 450 H 740" fill="none" stroke="#cccccc"/>
+<text x="30" y="360" font-size="10">54.307</text><text x="30" y="450" font-size="10">54.280</text><text x="715" y="466" font-size="10">4.3 s</text>
+<polyline points="76.59,450 78.57,415.31 81.06,408.32 82.62,360 160.86,360 239.09,360 317.36,360 395.59,360 473.82,360 552.06,360 630.3,360 708.54,360 740,360" fill="none" stroke="#156b89" stroke-width="2"/><text x="250" y="354" fill="#156b89" font-size="11">neighborhood</text>
+<polyline points="76.46,450 79.66,408.32 81.07,360 159.33,360 237.56,360 315.79,360 394.02,360 472.26,360 550.49,360 628.71,360 706.94,360 739.95,360" fill="none" stroke="#a64e15" stroke-width="2"/><text x="365" y="354" fill="#a64e15" font-size="11">neighborhood-greedy</text>
+<text x="30" y="504" font-size="13">small-20270103-dynamic</text>
+<path d="M 75 510 V 600 H 740" fill="none" stroke="#cccccc"/>
+<text x="30" y="510" font-size="10">57.354</text><text x="30" y="600" font-size="10">57.352</text><text x="715" y="616" font-size="10">4.3 s</text>
+<polyline points="76.39,600 77.05,510 155.29,510 233.53,510 311.77,510 390.01,510 468.24,510 546.47,510 624.69,510 703.02,510 740,510" fill="none" stroke="#156b89" stroke-width="2"/><text x="250" y="504" fill="#156b89" font-size="11">neighborhood</text>
+<polyline points="77.23,600 84.31,510 162.56,510 240.8,510 319.03,510 397.26,510 475.49,510 553.72,510 631.96,510 710.2,510 739.96,510" fill="none" stroke="#a64e15" stroke-width="2"/><text x="365" y="504" fill="#a64e15" font-size="11">neighborhood-greedy</text>
+</svg>

@@ -1,0 +1,41 @@
+{
+  "configuration": {
+    "size": "small",
+    "scenario": "dynamic",
+    "seed": 20261217,
+    "strategy": "expanding-hybrid",
+    "welfare": true,
+    "executable_sha256": "DFF2B204CD64F9E330BAB6DBE9D4F34153DA1E704D416347BC8639FB239075EB"
+  },
+  "requested_additional_seconds": 8,
+  "validated_plan": true,
+  "planning_complete": false,
+  "simulation_complete": true,
+  "search_process_seconds": 5.1370497,
+  "peak_working_set_bytes": 46616576,
+  "stop_reason": "time",
+  "stop_stage": "long-search",
+  "search_log": "run-20261127-191648.log",
+  "replay_log": null,
+  "realized": {
+    "legacy": 57.7386795982,
+    "expanded": 73.3911643314,
+    "completed": 30.0,
+    "failed": 1.0,
+    "timely_service": 0.304843837666,
+    "critical_ending": 0.0,
+    "total_ending": 135.30015373,
+    "unserved": 12.1198462699,
+    "transport": 1348.62,
+    "fuel": 1378.82,
+    "waste": 0.0,
+    "risk": 6.17,
+    "events_applied": 15.0,
+    "essential_coverage": 0.998461092079,
+    "critical_unserved": 0.0,
+    "delivered": 680.489619267,
+    "construction_cost": 24.0,
+    "projects": 2.0,
+    "essential_unserved": 12.1198462699
+  }
+}

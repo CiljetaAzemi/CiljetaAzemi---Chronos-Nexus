@@ -544,7 +544,7 @@ SimulationResult SimulationEngine::run(const GalaxyGraph& galaxy,
             return std::nullopt;
         auto objective = scoring->initial;
         for (const auto& job : result.activatedUrgentMissions)
-            objective.addExternalObligation(job);
+            objective.addUrgentObligation(job);
         const double remaining = minimumHorizon - now;
         auto addProjection = [&](SimulationResult& projection, const InventoryReservations& ledger,
             const std::set<Key>& keys, double sign) {

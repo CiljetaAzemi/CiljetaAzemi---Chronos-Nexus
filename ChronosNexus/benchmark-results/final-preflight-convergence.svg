@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="365" font-family="Arial"><rect width="800" height="365" fill="white"/><text x="30" y="30" font-size="20">Validated nominal Legacy incumbent by elapsed seconds</text>
+<text x="30" y="54" font-size="13">small-20270119-scarcity</text>
+<path d="M 75 60 V 150 H 740" fill="none" stroke="#cccccc"/>
+<text x="30" y="60" font-size="10">52.896</text><text x="30" y="150" font-size="10">51.937</text><text x="715" y="166" font-size="10">10.2 s</text>
+<polyline points="75.65,150 76.45,149.32 77.14,148.44 78.54,147.69 94.4,147.69" fill="none" stroke="#156b89" stroke-width="2"/><text x="250" y="54" fill="#156b89" font-size="11">exact-hybrid</text>
+<polyline points="75.38,150 76.78,148.44 77.44,147.69 79.58,98.17 85.99,73.8 98.39,64.75 148.56,62.96 188.01,60.62 347.4,60.01 673.32,60.01 717.59,60.75 723.92,60 740,60" fill="none" stroke="#a64e15" stroke-width="2"/><text x="365" y="54" fill="#a64e15" font-size="11">expanding-hybrid</text>
+<polyline points="78.5,150 80.15,149.32 81.07,147.69 107.53,83.22 433.45,83.22 739.94,83.22" fill="none" stroke="#487734" stroke-width="2"/><text x="480" y="54" fill="#487734" font-size="11">neighborhood-greedy</text>
+<text x="30" y="204" font-size="13">small-20270120-dynamic</text>
+<path d="M 75 210 V 300 H 740" fill="none" stroke="#cccccc"/>
+<text x="30" y="210" font-size="10">58.127</text><text x="30" y="300" font-size="10">57.911</text><text x="715" y="316" font-size="10">10.2 s</text>
+<polyline points="75.79,300 76.64,273.68 78.07,272.19 79.3,272.33 90.69,244.07 95.11,242.64 96.57,241.66 203.29,210 529.18,210 739.88,210" fill="none" stroke="#156b89" stroke-width="2"/><text x="250" y="204" fill="#156b89" font-size="11">exact-hybrid</text>
+<polyline points="75.86,300 79.56,290.9 80.22,272.83 84.16,268.46 85.57,268.8 112.4,268.3 120.84,263.53 121.81,258.98 122.64,258.68 448.55,258.68 723.3,257.08 739.92,257.08" fill="none" stroke="#a64e15" stroke-width="2"/><text x="365" y="204" fill="#a64e15" font-size="11">expanding-hybrid</text>
+<polyline points="75.51,300 79.6,295.85 80.95,290.9 81.42,286.6 82.57,287.01 91.53,283.56 92.99,272.83 94.35,272.33 94.87,272.68 96.73,268.3 422.63,268.3 740,268.3" fill="none" stroke="#487734" stroke-width="2"/><text x="480" y="204" fill="#487734" font-size="11">neighborhood-greedy</text>
+</svg>

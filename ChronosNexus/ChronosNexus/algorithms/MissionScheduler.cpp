@@ -56,7 +56,8 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
     std::vector<Spacecraft> ships, const GalaxyGraph& galaxy,
     const RouteWeights& weights, bool earliestArrival,
     const std::function<void(size_t)>& progress, const InventoryPlanningInput* inventory, bool benefitAware,
-    const std::function<void(const SchedulingResult&)>& publishPrefix, InitialSchedulingProfile* profile) {
+    const std::function<void(const SchedulingResult&)>& publishPrefix, InitialSchedulingProfile* profile,
+    bool preserveOrder) {
     using Clock = PlanningBudget::Clock;
     const auto started = Clock::now();
     RouteSearchWorkspace workspace;
@@ -144,7 +145,8 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
         result.rejectedMissionIds.push_back(mission.id);
         return true;
     });
-    std::sort(missions.begin(), missions.end(), [benefitAware](const Mission& a, const Mission& b) {
+    if (!preserveOrder)
+        std::sort(missions.begin(), missions.end(), [benefitAware](const Mission& a, const Mission& b) {
         if (benefitAware && serviceValue(a) != serviceValue(b))
             return serviceValue(a) > serviceValue(b);
         if (a.priority != b.priority)

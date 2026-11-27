@@ -19,6 +19,7 @@ struct CivilizationMetrics {
     double criticalEndingShortage;
     double criticalUnserved;
     double essentialUnserved = 0;
+    double urgentService = 0;
     double populationCoverage = 0;
     double missionLoss = 0;
     double transportPenalty = 0;
@@ -40,6 +41,7 @@ public:
     CivilizationMetrics evaluate(const SimulationResult& actual,
         const InfrastructureOptimizationResult& construction) const;
     void addExternalObligation(const Mission& mission);
+    void addUrgentObligation(const Mission& mission);
     size_t obligationCount() const { return obligations.size(); }
     bool isCriticalResource(int location, ResourceType resource) const;
     CivilizationObjective expanded(const std::string& profile, const std::vector<ResourceDemand>& inventory,
@@ -48,6 +50,7 @@ public:
     bool usesExpanded() const { return static_cast<bool>(model); }
     bool prioritizesSecurity() const { return securityPriority; }
     CivilizationObjective withSecurityPriority() const;
+    CivilizationObjective withWelfarePriority() const;
     CivilizationObjective withBalancedPriority(int basisPoints = 100) const;
     std::array<double, 5> balancedKey(const CivilizationMetrics& metrics) const;
     bool better(const CivilizationMetrics& candidate, const CivilizationMetrics& incumbent) const;
@@ -63,6 +66,8 @@ private:
     struct ExpandedModel;
     std::shared_ptr<const ExpandedModel> model;
     bool securityPriority = false;
+    bool welfarePriority = false;
+    std::unordered_set<int> urgentIds;
     int bandBasisPoints = 0;
     CivilizationMetrics evaluateExpanded(const SimulationResult& actual,
         const InfrastructureOptimizationResult& construction, CivilizationMetrics metrics) const;

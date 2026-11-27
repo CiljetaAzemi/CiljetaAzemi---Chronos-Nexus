@@ -8,6 +8,54 @@
 namespace regression {
 void testCivilization() {
     {
+        auto urgent = makeFlightFixture().first;
+        auto ordinary = urgent;
+        ++ordinary.id;
+        const CivilizationObjective legacy({}, {ordinary}, {}, {}, 30, 0,
+            CivilizationObjective::parseWeights("balanced"));
+        auto welfare = legacy.expanded("balanced", {}, {}, {}, 30).withWelfarePriority();
+        welfare.addUrgentObligation(urgent);
+        SimulationResult served, deferred;
+        served.deliveries.emplace(urgent.id, SimulationResult::Delivery{urgent.cargoAmount, 1});
+        deferred.deliveries.emplace(ordinary.id, SimulationResult::Delivery{ordinary.cargoAmount, 1});
+        const auto first = welfare.evaluate(served, {});
+        const auto second = welfare.evaluate(deferred, {});
+        require(first.service == second.service && first.urgentService == 1 && second.urgentService == 0 &&
+            welfare.better(first, second), "Welfare must distinguish urgent service on equal resource outcomes.");
+        Infrastructure project;
+        project.id = 2;
+        project.constructionTime = 3;
+        project.resourceImpact.emplace(ResourceType::Food, 2);
+        InfrastructureOptimizationResult build{{2}, 0, 0, {{2, 1.25}}};
+        const auto events = CivilizationPlanner::constructionEvents({project}, build);
+        require(events.size() == 1 && events.front().eventTime == 4.25,
+            "A delayed construction decision must preserve the full build duration.");
+    }
+    {
+        benchmark::Scenario data;
+        Infrastructure project;
+        project.id = 0;
+        project.locationId = 0;
+        project.constructionCost = 1;
+        project.constructionTime = 0;
+        project.strategicValue = 100;
+        data.projects = {project};
+        const auto legacy = CivilizationObjective({}, {}, data.projects, {}, 30, 1,
+            CivilizationObjective::parseWeights("balanced"));
+        const auto expanded = legacy.expanded("balanced", {}, data.projects, {}, 30);
+        LongSearchOptions options;
+        options.exactHybrid = true;
+        PlanningBudget clock({5});
+        const auto result = CivilizationPlanner::anytime(data, legacy, expanded, legacy, {}, 1, 30, {},
+            {}, clock, false, true, false, [] { return std::vector<Mission>{}; }, false, 2, &options);
+        const SimulationResult noMissions;
+        const double exact = std::max(legacy.evaluate(noMissions, {}).score,
+            legacy.evaluate(noMissions, {{0}, 1, 100}).score);
+        require(result.planningComplete && result.forecast && result.simulation &&
+            std::abs(result.plan.forecastScore - exact) < 1e-9,
+            "Long search must terminate with the exact optimum of the one-project fixture.");
+    }
+    {
         const CivilizationObjective legacy({}, {}, {}, {}, 30, 0,
             CivilizationObjective::parseWeights("balanced"));
         const auto expanded = legacy.expanded("balanced", {}, {}, {}, 30);

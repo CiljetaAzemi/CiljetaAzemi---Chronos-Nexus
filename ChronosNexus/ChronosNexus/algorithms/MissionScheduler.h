@@ -85,7 +85,8 @@ public:
         const InventoryPlanningInput* inventory = nullptr,
         bool benefitAware = false,
         const std::function<void(const SchedulingResult&)>& publishPrefix = {},
-        InitialSchedulingProfile* profile = nullptr
+        InitialSchedulingProfile* profile = nullptr,
+        bool preserveOrder = false
     );
     static bool feasible(const Mission& mission, const Spacecraft& ship,
         double departure, const RouteMetrics& route, double& arrival);

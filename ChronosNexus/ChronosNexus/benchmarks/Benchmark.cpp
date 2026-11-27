@@ -5,6 +5,8 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <filesystem>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 #include "../algorithms/InfrastructureOptimizer.h"
@@ -74,13 +76,57 @@ int runBenchmark(int argc, char* argv[]) {
     bool reverseAidBounds = false;
     bool expandedObjective = false;
     bool securityPriority = false;
+    bool welfarePriority = false;
     int balancedBasisPoints = 0;
     BudgetLimits limits;
+    LongSearchOptions search;
+    bool longSearch = false;
     std::string profile = "balanced", scenario = "standard";
     for (int i = 5; i < argc; ++i) {
         const std::string option = argv[i];
         if (option == "--trace-plan")
             trace = true;
+        else if (option == "--long-search" || option == "--long-search-fixed" ||
+                 option == "--neighborhood-search" || option == "--neighborhood-greedy" ||
+                 option == "--exact-hybrid" || option == "--expanding-hybrid") {
+            longSearch = true;
+            search.exactHybrid = option == "--exact-hybrid";
+            search.expandingHybrid = option == "--expanding-hybrid";
+            search.neighborhoods = option.starts_with("--neighborhood-") || search.expandingHybrid;
+            search.acceptWorse = option != "--neighborhood-greedy";
+            search.adaptive = option != "--long-search-fixed";
+        } else if (option.starts_with("--checkpoint="))
+            search.checkpoint = option.substr(13);
+        else if (option.starts_with("--search-progress="))
+            search.progress = option.substr(18);
+        else if (option == "--resume-search")
+            search.resume = true;
+        else if (option == "--replay-checkpoint")
+            search.replayOnly = search.resume = true;
+        else if (option.starts_with("--report-seconds=") || option.starts_with("--evaluation-time-reference=")) {
+            const auto value = option.substr(option.find('=') + 1);
+            size_t end = 0;
+            const double seconds = std::stod(value, &end);
+            if (end != value.size() || !std::isfinite(seconds) || seconds <= 0)
+                throw std::invalid_argument("Expected a positive, finite duration.");
+            if (option.starts_with("--report-seconds="))
+                search.reportSeconds = seconds;
+            else
+                search.timeReference = seconds;
+        } else if (option.starts_with("--overall-weights=")) {
+            std::istringstream values(option.substr(18));
+            std::string item;
+            for (auto& coefficient : search.coefficients) {
+                size_t end = 0;
+                if (!std::getline(values, item, ','))
+                    throw std::invalid_argument("Expected four overall coefficients.");
+                coefficient = std::stod(item, &end);
+                if (end != item.size() || !std::isfinite(coefficient) || coefficient < 0)
+                    throw std::invalid_argument("Invalid overall coefficient.");
+            }
+            if (values.peek() != EOF)
+                throw std::invalid_argument("Expected four overall coefficients.");
+        }
         else if (option == "--profile-initial")
             profileInitial = false;
         else if (option == "--indexed-initial")
@@ -106,7 +152,8 @@ int runBenchmark(int argc, char* argv[]) {
                 throw std::invalid_argument("Balanced-priority width must be 1-10000 basis points.");
             expandedObjective = true;
         }
-        else if (option == "--expanded-objective" || option == "--security-priority") {
+        else if (option == "--expanded-objective" || option == "--security-priority" || option == "--welfare-priority") {
+            welfarePriority = welfarePriority || option == "--welfare-priority";
             securityPriority = securityPriority || option == "--security-priority";
             expandedObjective = true;
             reportCivilization = true;
@@ -132,6 +179,33 @@ int runBenchmark(int argc, char* argv[]) {
         throw std::invalid_argument("Expanded planning requires phase3 and a named objective profile.");
     if (limits.enabled() && !civilization)
         throw std::invalid_argument("Computational budgets require phase3.");
+    if (longSearch && (!civilization || limits.seconds <= 0 || (search.resume && search.checkpoint.empty())))
+        throw std::invalid_argument("Long search requires phase3, a time budget, and a checkpoint for resume.");
+    if (longSearch && !search.checkpoint.empty() && !search.progress.empty() &&
+        std::filesystem::absolute(search.checkpoint).lexically_normal() ==
+        std::filesystem::absolute(search.progress).lexically_normal())
+        throw std::invalid_argument("Checkpoint and progress must use different paths.");
+    if (longSearch) {
+        std::signal(SIGINT, PlanningBudget::consoleInterrupt);
+        profileInitial = 2;
+        search.seed = static_cast<unsigned>(seed);
+        std::ostringstream identity;
+        identity << name << ',' << seed << ',' << scenario << ',' << profile << ',' << expandedObjective
+                 << ',' << securityPriority << ',' << balancedBasisPoints << ',' << feasibilityAwareAllocator
+                 << ',' << indexedAid << ',' << reverseAidBounds << ',' << experimentalAllocator << ',' << search.adaptive
+                 << ',' << std::setprecision(17) << search.timeReference;
+        for (double value : search.coefficients)
+            identity << ',' << value;
+        if (search.neighborhoods)
+            identity << ",neighborhood-v2," << search.acceptWorse;
+        if (search.exactHybrid)
+            identity << ",exact-hybrid-v1";
+        if (search.expandingHybrid)
+            identity << ",expanding-master-v3";
+        if (welfarePriority)
+            identity << ",welfare-v1";
+        search.identity = identity.str();
+    }
 
     PlanningBudget clock(limits);
     benchmark::Measurements measurements;
@@ -182,7 +256,9 @@ int runBenchmark(int argc, char* argv[]) {
     const auto expanded = reportCivilization
         ? legacy.expanded(profile.find(',') == std::string::npos ? profile : "balanced",
             data.inventory, data.projects, data.populationByLocation(), 30) : legacy;
-    const auto objective = balancedBasisPoints ? expanded.withBalancedPriority(balancedBasisPoints) : securityPriority ? expanded.withSecurityPriority() : expandedObjective ? expanded : legacy;
+    const auto objective = welfarePriority ? expanded.withWelfarePriority() :
+        balancedBasisPoints ? expanded.withBalancedPriority(balancedBasisPoints) :
+        securityPriority ? expanded.withSecurityPriority() : expandedObjective ? expanded : legacy;
     std::cout << "Population " << data.population << ", colonies " << data.colonies.size()
               << ", stations " << data.stations.size() << ", spacecraft " << data.ships.size()
               << ", aid locations " << data.aidDemands.size() << ", external events "
@@ -205,7 +281,7 @@ int runBenchmark(int argc, char* argv[]) {
                 auto allocation = ResourceAllocator::allocateWithRoutes(data.aidDemands, data.graph, weights,
                     {}, experimentalAllocator);
                 return LogisticsPlanner::createMissions(allocation, data.aidDemands, ResourceType::Food, 24, size.missions);
-            }, false, profileInitial);
+            }, false, profileInitial, longSearch ? &search : nullptr);
         if (profileInitial) {
             const auto& p = result.initialProfile;
             std::cout << std::setprecision(12) << "INITIAL_PROFILE," << p.missionsTested << ','

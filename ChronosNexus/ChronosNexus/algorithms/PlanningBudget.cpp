@@ -85,7 +85,7 @@ void PlanningBudget::check() {
         if (!memoryAvailable())
             cause = "memory";
     }
-    if (stopRequested.load(std::memory_order_relaxed))
+    if (consoleStop || stopRequested.load(std::memory_order_relaxed))
         cause = "cancelled";
     if (cause) {
         if (!*exhaustedReason) {

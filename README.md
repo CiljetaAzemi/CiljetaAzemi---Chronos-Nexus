@@ -8,6 +8,12 @@ Enable the experimental security-priority policy with `--security-priority` in P
 
 The [computational budget and anytime planner](ChronosNexus/ANYTIME.md) describes the optional time and working-set controls, validated schedule prefixes, and separate forecast and simulation statuses.
 
+The [extended civilization search](ChronosNexus/ANYTIME.md#extended-civilization-search) adds opt-in fixed and adaptive multistart search, recoverable checkpoints, and a reproducible eight-hour Small experiment. Existing benchmark modes remain available for comparison.
+
+The [exact hybrid experiment](ChronosNexus/ANYTIME.md#exact-hybrid-for-small-instances) systematically combines spacecraft itineraries and construction portfolios on Small instances. Its certificates concern the enumerated decision menu.
+
+The experimental [expanding itinerary master](ChronosNexus/ANYTIME.md#expanding-itinerary-master) persists generated itineraries and compatibility search progress. The welfare-priority policy can be evaluated independently of the search mode.
+
 The budgeted Phase 3 benchmark can use `--indexed-initial` to reuse route-search storage during initial scheduling. The [sequential comparison](ChronosNexus/benchmark-results/README.md#initial-scheduling-scalability) reports assignment equivalence, throughput and memory for this experimental option.
 
 ## Abstract
@@ -211,3 +217,32 @@ Fixed obligations retain their identities, destinations, quantities and deadline
 The original techniques are Dijkstra, greedy scheduling, 0/1 Knapsack, and event simulation. The Phase 3 contribution is the fixed-denominator score, deficit-based construction and supplier proposals, and joint selection by replay using known production completions. The heuristic tests five joint candidates and at most one empty fallback. With scheduler cost `A`, local-search cost `L`, nominal replay cost `E`, shortest-path query cost `D`, and `P` projects and budget `B`, additional planning time is bounded by `O(2A + L + 6E + 48D + PB)`, plus inventory indexing, obligation sorting, and project lookup. The candidates are evaluated sequentially. Storage holds a bounded number of schedules and inventory/graph snapshots, plus the existing scheduler, search, and Knapsack workspace.
 
 The proposal budget can miss better supplier combinations, time-phased transport, or construction portfolios. Candidate generation uses approximate deficit priorities and the existing freight planner. The final nominal replay checks timed construction effects exactly as the simulator models them. The [benchmark evaluation](ChronosNexus/benchmark-results/README.md) reports sensitivity and realized outcomes.
+
+## Submission requirements check
+
+The original specification controls this check. Tracker items CN-001 through CN-018 correspond to the 18 core requirements. The tracker splits wider specification details into separate tasks, so its status cells are not used as a substitute for program evidence.
+
+| ID | Requirement | Delivery status and evidence |
+|---|---|---|
+| CN-001 | Large weighted dynamic graph | Verified. Directed graph, route lookup and revision updates, including the one-million-edge run. |
+| CN-002 | Model major entities | Verified at core-model level. The scenario generator and JSON reader use planets, colonies, stations, spacecraft, resources, routes, missions and events. |
+| CN-003 | Efficient routing | Verified. Weighted Dijkstra, indexed workspace and exact initial pruning. |
+| CN-004 | Multiple route objectives | Verified. Distance, fuel, time, risk and reliability enter weighted route selection. |
+| CN-005 | Allocate limited resources | Verified. Greedy proposals and feasibility-aware aid account for competing receivers, donors and booked capacity. |
+| CN-006 | Constrained scheduling | Verified. Inventory reservations, capacity, fuel, availability and deadlines are checked at construction and replay. |
+| CN-007 | Budgeted infrastructure | Verified. Knapsack, feasible candidate portfolios and construction events. Extreme returned before this phase. |
+| CN-008 | Dynamic routes, resources, spacecraft and missions | Core cases verified. Route, production, spacecraft, urgency and construction have handlers. Discovery, population changes and temporary resource unavailability remain unsupported event categories. |
+| CN-009 | Detect invalid decisions | Verified on route closure, risk escalation and spacecraft outage cases. |
+| CN-010 | Replan affected decisions | Verified by targeted recovery and end-to-end event runs. The benchmark CSV includes measured replanning times. |
+| CN-011 | Forecast and prevent shortages | Verified by deterministic shortage fixtures and scenario export. The ordinary dataset benchmark and the proactive JSON path use distinct simulation configurations. |
+| CN-012 | Account for uncertainty | Verified for conservative travel ranges and reliability-aware route choices. Simulation does not estimate survival through stochastic mortality. |
+| CN-013 | At least three algorithmic techniques | Verified. Dijkstra, greedy optimization, Knapsack dynamic programming and local search. |
+| CN-014 | Team-designed or substantially modified algorithm | Implemented and tested. Inventory-aware multi-criteria scheduling and coordinated shortage recovery combine original project logic with standard algorithms. |
+| CN-015 | Time and space analysis | Documented throughout this README and the linked algorithm reports. |
+| CN-016 | Experiments at increasing scale | Verified at all four dimensions. Extreme evidence is a complete replay of a validated partial plan. |
+| CN-017 | Search-space reduction | Verified on matched work. Earlier experiments quantify exact prechecks and route-search reductions. |
+| CN-018 | Solution under a computational budget | Verified in the reported time and sampled working-set limits. A complete assignment or hard instantaneous memory enforcement is not established. The eight-hour experiment remains pending. |
+
+The professor asks for a population survival statistic. The delivered report measures population-weighted essential consumption coverage as a proxy. The model has no validated demographic outcome mechanism. Search counts distinguish replayed candidates, route-node expansions and the measured pruning denominator. The delivery CSV reports route-node expansions from the retained plan and simulation, not all discarded search work. No official competition scoring coefficients are assumed.
+
+[End-to-end measurements and reproduction](ChronosNexus/benchmark-results/README.md#submission-verification) · [Objective formulas and proxies](ChronosNexus/OBJECTIVE.md) · [Eight-hour run and recovery](ChronosNexus/ANYTIME.md#submission-runner)

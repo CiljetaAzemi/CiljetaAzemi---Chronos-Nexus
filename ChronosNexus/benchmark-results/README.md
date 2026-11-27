@@ -328,3 +328,116 @@ All four runs returned validated partial plans and completed event simulation. T
 [Sequential results and assignment hashes](initial-scheduling-study.csv) · [Validated incumbent samples](initial-scheduling-incumbents.csv)
 
 The 300 s pair was run sequentially after the shorter comparisons showed higher throughput. To reproduce it, use the same command with `-Sizes extreme -ExtremeBudgetsMs 300000` and a fresh output directory. All 756 hash assignments appeared verbatim in the indexed trace. Both runs stopped during initial scheduling and completed simulation. Indexed assigned 4.40% of external missions versus 1.51% for hash, and peak working set rose from 746.75 to 752.56 MiB. Wall times were 298.41 and 298.91 s, respectively. Timely fulfillment rose from 3.80% to 9.11% and unmet consumption fell by 1,688.27 units. Critical ending shortage held at 20,000. Total ending shortage rose by 2,524.27 units, and fuel rose from 44,287.70 to 123,902.12. The larger plan also had higher transportation costs, waste and risk. The same-budget results show a capacity improvement with mixed civilization outcomes.
+
+## Extended search preliminary evaluation
+
+Run `./ChronosNexus/Compare-LongSearch.ps1 -Executable .\x64\json-bin\ChronosNexus.exe -OutputDirectory .\x64\long-study -Seconds 5` from the repository root. The twelve preliminary runs were sequential. All used the Legacy objective, pruned indexed construction and indexed aid with reverse bounds, with identical inputs within each case. All completed event simulation.
+
+| Case | Baseline realized Legacy | Fixed | Adaptive |
+|---|---:|---:|---:|
+| Small standard | 58.2487 | 58.4838 | 58.5471 |
+| Small scarcity | 54.2804 | 54.2929 | 54.2929 |
+| Small urgent events | 52.2803 | 52.2803 | 52.2803 |
+| Medium production cut | 61.0162 | 61.0162 | 61.0162 |
+
+On Small standard, adaptive completed 26 missions versus 27 for the baseline and left 62.48 units of unmet consumption versus 52.48. The scalar improvement therefore came with a realized welfare trade-off. At the 60-second budget the adaptive standard run improved the nominal score from 58.7871 to 59.0712, with its final best found at 2.11 s. It evaluated 64,663 feasible long-search candidates, skipped 6,026 recent duplicate signatures, and completed simulation. Peak process working set was 9.27 MiB. It found no later improvement in that run, and no proof of exhaustion. This is evidence of early improvement and subsequent stagnation on one seed. It does not establish multi-hour benefit or adaptive superiority. Large and Extreme extended-search experiments remain pending. The prior routing studies characterize initialization only.
+
+Checkpoint validation separately recovered an incumbent and increased the saved iteration count from 1,547 to 3,133, accepted a compatible replay, and rejected a different seed. Release x64 and the regression suite passed, including exhaustive comparison of the two feasible portfolios in the one-project fixture. Full-duration results remain pending.
+
+[Paired summary](long-search-study.csv) · [Incumbent curves as CSV](long-search-progress.csv) · [One-minute trace](long-search-minute.csv) · [Multi-hour commands](../ANYTIME.md#running-and-recovery)
+
+### Neighborhood redesign experiment
+
+The development matrix compares the baseline, historical fixed and adaptive search, and two booking-neighborhood variants. Use `Compare-LongSearch.ps1 -Neighborhoods -Seconds 5` with the usual executable and output-directory parameters. Use `-HeldOut` for the separate Small seeds. `-Modes` and `-Scenarios` select subsets. The first version overused its leading operator and grew the edit radius linearly. The revised version switches to round robin during stagnation, grows the edit radius logarithmically and samples initially local carriers directly. Its checkpoint identity differs from the first version.
+
+The revised 30 s standard comparison reached nominal Legacy 59.09389 with improving-only neighborhoods, 59.07124 with historical adaptive search and 58.97680 with downhill acceptance. The latter improved as late as 12.47 s, but did not catch the other modes. The 5 s revised scarcity and urgent-event cases improved by about 0.01451 and 0.00179 realized points over the historical adaptive control. The revised Medium production-cut candidates also improved over the historical control. A reported improvement after exploratory acceptance is a sequence observation, without proof that the downhill move was necessary.
+
+[First design outcomes](neighborhood-v1.csv) · [Revised development outcomes](neighborhood-v2-5.csv) · [Convergence curves](neighborhood-convergence.svg) · [30-second ablation](neighborhood-v2-30.csv)
+
+On held-out five-second cases, the revised exploratory mode improved realized Legacy relative to historical adaptive search by 0.05063 on standard, 0.71139 on scarcity, and 0.01005 on urgent events. Mission completions and unmet consumption matched historical adaptive on each of these three cases. The strongest scarcity gain reduced critical ending shortage from 4.00 to 1.75 and fuel from 371.44 to 328.79 while raising transportation cost from 312.32 to 330.23. The improving-only ablation matched the exploratory variant on scarcity and urgent events and was slightly behind it on held-out standard. The 60 s development urgent-event run found its best around 0.02 s despite 212,448 attempts, so its extra budget did not improve the result. The observed duplicate count covers the bounded recent cache and cannot establish global diversity or provable exhaustion.
+
+All sampled revised traces checked so far were nondecreasing in nominal Legacy. A short interrupted-run checkpoint test resumed from iteration 2,526 to 4,757, with its saved nominal Legacy rising from 53.07452 to 53.09232. The previous tiny exact regression remains a one-project case. The redesigned operators have no exact gap for these generated galaxies.
+
+[Held-out outcomes](neighborhood-heldout.csv) · [Held-out progress](neighborhood-heldout-progress.csv) · [60-second development outcomes](neighborhood-v2-60.csv)
+
+The five-minute follow-up on held-out Small standard finished event simulation with 13 completions and zero failures. Its nominal best was 56.39910 at 6.45 s, and its realized Legacy score was 56.32274. It generated 1,406,887 attempts, skipped 239,660 recent duplicates and completed 1,167,227 nominal evaluations. Peak working set was 8.62 MiB. This run improved slightly over the five-second outcome but added no evidence of improvement after the first minute. Keep the default planner. The next research question is whether coordinated repairs with additional decision variables can improve the plateau, rather than increasing the budget for this neighborhood mix. Budgets from 15 minutes to eight hours remain untested.
+
+[Five-minute outcomes](neighborhood-v2-300.csv) · [Five-minute progress](neighborhood-v2-300-progress.csv) · [Convergence curve](neighborhood-five-minute.svg)
+
+### Exact hybrid comparison
+
+The six configurations ran sequentially at five seconds on each held-out Small case, using the same Legacy objective and scenario. All 18 completed event simulation. The exact hybrid improved realized Legacy over the strongest historical variant on standard (56.67484 versus 56.30060) and urgent events (58.12866 versus 57.89919). It completed one and three fewer missions respectively, with 3.0 and 3.5 more units of unmet consumption. Scarcity exhausted the restricted menu after 2,880 replay attempts and returned 52.87579. The neighborhood search reached 53.56230 under the same nominal objective, leaving at least 0.68651 Legacy points outside the exhausted menu. The full-problem gap remains unknown.
+
+At 30 seconds, standard reached nominal 56.78578 at 23.01 s and urgent events reached 58.71638 at 13.62 s. Neither exhausted its menu. Both scores improved over the five-second observations. Standard realized unmet consumption rose to 89.172. Longer enumeration is demonstrably able to improve this scalar on two cases, with no evidence here beyond 30 seconds or of broad quality superiority. A separate scarcity replay recovered the checkpoint with the same realized score. Release x64 and all self-tests passed.
+
+[Matched results](exact-hybrid-5.csv) · [Five-second curves](exact-hybrid-curves.svg) · [30-second results](exact-hybrid-deeper.csv) · [30-second traces](exact-hybrid-deeper-progress.csv) · [Restricted model and recovery](../ANYTIME.md#exact-hybrid-for-small-instances)
+
+### Expanding master and native cargo probe
+
+The matched Small scarcity case used seed 20270119 and the same Legacy objective, event stream, and one-minute budget. Exhaustive pairing admitted 30,163 columns, finished 690, and reached 53.80834 with 1.006 units of critical ending shortage. Geometric pairing admitted 29,895, finished 17,045, and reached 54.14372 with zero critical ending shortage. That matched the same-budget improving-only control, with six completions and 125 units of unmet consumption. The geometric pass recorded eight master improvements versus three for exhaustive pairing. The five-minute exhaustive run also reached 54.14372, at 90.45 seconds. Geometric pairing reached it at 24.83 seconds. The comparison establishes better use of the tested time budget on this seed. It does not establish a global gap or an eight-hour benefit.
+
+The standalone HiGHS 1.16.0 Windows x64 probe solved the four-leg continuous cargo LP in approximately 2.3 ms on the preserved run. The analytic optimum is 14.25 and the recipient-first cost is 37, a 61.49% reduction for the fixed-departure fixture. The release was retrieved through an approved network retry. From an x64 Developer PowerShell with the archive extracted, run:
+
+```powershell
+.\ChronosNexus\Run-Highs-Cargo-Probe.ps1 -HighsRoot .\x64\solver-probe\release -OutputDirectory .\x64\solver-probe\reproduction
+```
+
+[One-minute exhaustive comparison](expanding-scarcity-60.csv) · [Geometric comparison](expanding-v2-60.csv) · [Geometric master trace](expanding-v2-60-master.csv) · [Five-minute exhaustive results](expanding-scarcity-300.csv) · [Native cargo probe](highs-cargo-probe.csv)
+
+The backpressure refinement retains the existing admission cap and geometric pairing, with an explicit oldest-column probe. At 60 s it admitted 24,537 columns and completed 24,504, leaving 33 pending versus 12,850 in the geometric-only run. It reached the same 54.14372 Legacy score at 17.40 s versus 24.83 s. Peak working set fell from 111.39 to 91.74 MiB. It generated 629,048 column observations, identified 604,511 canonical repeats, rejected 212,987 incompatible substitutions before replay, and obtained four master improvements. These counts measure distinct itinerary encodings and actual frontier work. They do not establish dominance or count globally distinct civilization plans.
+
+The 30 s welfare-priority scarcity run completed six missions with zero failures, eliminated critical ending shortage, and recorded 89 units of unmet consumption versus 125 under the observed Legacy plan. Its Legacy score was 53.22966. These are illustrative outcomes under different policies and budgets, without an isolated causal estimate of the policy effect. Welfare prioritizes consumption and service ahead of weighted operational savings.
+
+At five minutes, backpressure finished all 29,756 admitted columns and performed 180,668 master replays, including four incumbent improvements. It finished at 297.35 s, completed event simulation, and peaked at 112.55 MiB. Final realized Legacy stayed 54.14372, with zero critical ending shortage, six completions and 125 unmet units. Its last improvement occurred at 15.65 s. After the key-byte cap filled, 1,264,604 nonduplicate column observations could not enter the master. Complete generator proposals could still compete, but their combination space ceased expanding. There is no evidence here of productive multi-hour use or an optimality certificate. The 15-minute, 30-minute and eight-hour configurations remain unmeasured.
+
+A resumed one-minute checkpoint advanced from column 24,504, partner 7, to column 28,467, partner 0. Cumulative master replays advanced from 146,317 to 179,569 and the Legacy incumbent remained 54.14372. Recovery kept the frontier and did not restart enumeration at column zero. Release x64, all self-tests, and the native probe reproduction passed.
+
+[Backpressure at one minute](expanding-v3-60.csv) · [Welfare-priority scarcity](expanding-v3-welfare-30.csv) · [Backpressure at five minutes](expanding-v3-300.csv) · [Master counters](expanding-v3-300-master.csv) · [Convergence curve](expanding-v3-curves.svg)
+
+## Submission verification
+
+The delivery configuration uses pruned indexed initial scheduling and welfare-priority comparison. Small extended experiments add the existing expanding hybrid and indexed aid with reverse bounds. The Medium, Large, and Extreme delivery cells use the fixed anytime pipeline. The historical default remains available. Both sides of each pair used seed 20261217, the same generated event stream and the same limits. The baseline used Legacy and the original initial scheduling path. This is an end-to-end configuration comparison, so it does not isolate the effect of one change. Legacy and Expanded were separately recomputed for both outputs. The listed times are engine times.
+
+| Size | Budget | Baseline completed / failed | Delivery completed / failed | Baseline / delivery engine s | Delivery peak MiB | Static planning / event replay |
+|---|---:|---:|---:|---:|---:|---|
+| Small | 5 s | 27 / 1 | 29 / 1 | 0.04 / 1.00 | 6.97 | Budget stop / complete |
+| Medium | 8 s | 248 / 2 | 248 / 2 | 1.00 / 0.77 | 14.28 | Complete / complete |
+| Large | 45 s | 2,404 / 11 | 2,404 / 11 | 40.74 / 37.00 | 85.62 | Complete / complete |
+| Extreme | 60 s | 65 / 1 | 467 / 3 | 57.30 / 57.19 | 746.56 | Partial at initial scheduling / complete |
+
+All eight returned validated nominal plans and completed the event simulation. The Small delivery case left zero critical ending shortage versus 15 in the baseline, and reduced unmet consumption from 33.78 to 11.83. Overall ending shortage increased from 122.34 to 132.59. Medium unmet consumption dropped from 254.96 to 248.79 with slightly higher ending shortages. Large selected 64 construction projects in both modes. The Extreme delivery plan left 49,531 of 50,000 original missions unassigned, selected no construction before the cutoff, and applied 1,001 events. The final simulation is evidence that a budgeted partial plan can execute at Extreme scale. It does not establish high assignment coverage or full planning completion. The repeated event-simulation route counts describe applied replanning operations. Search-space reduction is reported on matched work in the earlier route-search study; a global percentage for runs with different search effort has no measured denominator.
+
+Reproduce from the repository root with PowerShell 7 after a Release x64 build:
+
+```powershell
+.\ChronosNexus\Test-Delivery.ps1 -Executable .\x64\hybrid-bin\ChronosNexus.exe -OutputDirectory .\x64\delivery-reproduction
+```
+
+[Eight-run measurements](delivery-end-to-end.csv) · [Matched pruning study](route-reduction-study.csv) · [Build and execution](../BUILD.md)
+
+The submission runner was exercised for 60 s followed by an 8 s resume using the same executable, seed, strategy, and welfare policy. It produced readable JSON results and checkpoint files, CSV progress and milestones, and an SVG chart. The first segment returned after 57.10 engine seconds with 30 completed missions, one failure, zero critical ending shortage, and 12.12 unmet units. The final saved master cursor advanced from 9,352 to 9,913 on resume and cumulative master replays advanced from 88,004 to 94,344. The same incumbent was retained. Its Legacy and Expanded realized cross-scores were 57.73868 and 73.39116. The eight-hour run itself has not been performed.
+
+The JSON examples were also exercised independently. The shortage scenario completed one delivery and exported one preventive decision. The replanning scenario applied four events and exported four repair decisions, with two completions and one failure.
+
+[Runner progress](delivery-minute-progress.csv) · [Milestones](delivery-minute-milestones.csv) · [Final JSON](delivery-minute-final.json) · [Convergence chart](delivery-minute-convergence.svg)
+
+### Final pre-experiment comparison
+
+The bounded preflight compared four configurations on held-out Small scarcity and urgent-event cases (seeds 20270119 and 20270120), with the same 12-second budget, welfare policy, pruned initial scheduler, indexed aid and reverse bounds. All eight runs returned validated plans and completed simulation.
+
+| Scenario | Mode | Completed / failed | Critical ending shortage | Unmet consumption | Realized Legacy / Expanded |
+|---|---|---:|---:|---:|---:|
+| Scarcity | Fixed anytime | 6 / 0 | 4 | 89 | 51.93680 / 65.99494 |
+| Scarcity | Improving-only neighborhood | 6 / 0 | 1.75 | 89 | 52.64824 / 66.04702 |
+| Scarcity | Static exact hybrid | 6 / 0 | 4 | 89 | 51.96142 / 66.04445 |
+| Scarcity | Expanding hybrid | 6 / 0 | 1.002 | 89 | 52.89555 / 66.04787 |
+| Urgent events | Fixed anytime | 22 / 2 | 0 | 14.41 | 57.35490 / 72.81990 |
+| Urgent events | Improving-only neighborhood | 21 / 2 | 0 | 29.04 | 57.42855 / 72.99104 |
+| Urgent events | Static exact hybrid | 19 / 2 | 0 | 29.04 | 57.56677 / 73.20321 |
+| Urgent events | Expanding hybrid | 21 / 2 | 0 | 29.04 | 57.45526 / 73.03657 |
+
+Keep expanding hybrid with welfare for the requested Small long-run experiment. It found a better scarcity plan at the same fuel as the other two search modes and had five and seven master improvements across these two inputs. Fixed anytime remains the conservative operational choice when realized urgent-event welfare matters. Static exact exhausted the scarcity menu in under a second without matching expanding search. Improving-only search skipped 80,888 recent repeats in 83,666 scarcity attempts, compared with 20,179 in 43,834 generator attempts for expanding search. The latter also evaluated master substitutions, so the two denominators describe different work. Expanding finished 4,004 of 4,011 admitted scarcity columns, but used about 22.54 MiB versus 6.84 MiB for improving-only. The historical five-minute Legacy case filled the pool and stopped improving at 15.65 seconds. Short-run evidence does not establish useful eight-hour convergence.
+
+Use the delivery matrix for Medium, Large and Extreme recommendations. The 60 s Extreme plan is a partial schedule and should be presented with its unassigned count. Search-space reduction remains a matched-work statistic. Overall evaluation coefficients are experimental. The broad dynamic core handles changes to all four required entity classes. The three unsupported event examples listed in the root requirements check remain limitations, as do survival measurement and process-wide search-state accounting.
+
+[Matched outcomes](final-preflight-comparison.csv) · [Progress](final-preflight-progress.csv) · [Convergence](final-preflight-convergence.svg)

@@ -44,6 +44,19 @@ struct AnytimePlan {
     InitialSchedulingProfile initialProfile;
 };
 
+struct LongSearchOptions {
+    std::string identity, checkpoint, progress;
+    unsigned seed = 1;
+    bool adaptive = true, resume = false, replayOnly = false;
+    bool neighborhoods = false, acceptWorse = true;
+    bool exactHybrid = false;
+    bool expandingHybrid = false;
+    double reportSeconds = 30;
+    // Experimental coefficients for quality, time, memory and operational burden.
+    std::array<double, 4> coefficients{1, .05, .05, .1};
+    double timeReference = 28800, memoryReferenceMiB = 1024;
+};
+
 class CivilizationPlanner {
 public:
     using CandidateObserver = std::function<void(const SchedulingResult&,
@@ -55,7 +68,7 @@ public:
         const std::vector<Event>& knownProductionChanges, PlanningBudget& clock,
         bool coordinatedAllocator, bool indexedAid, bool reverseBounds,
         const std::function<std::vector<Mission>()>& proposeAid, bool proactiveSimulation = false,
-        std::optional<int> profileInitial = std::nullopt);
+        std::optional<int> profileInitial = std::nullopt, const LongSearchOptions* longSearch = nullptr);
 
     static CoordinatedAid coordinateAid(CivilizationPlan& plan, const std::vector<Mission>& obligations,
         const std::vector<ResourceDemand>& accounts, const std::vector<ResourceDemand>& network,

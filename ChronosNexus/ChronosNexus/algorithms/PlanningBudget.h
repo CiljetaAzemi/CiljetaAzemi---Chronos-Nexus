@@ -3,6 +3,7 @@
 #include <chrono>
 #include <atomic>
 #include <cstddef>
+#include <csignal>
 #include <string>
 #include <string_view>
 
@@ -32,6 +33,7 @@ public:
     void stage(const char* value) { stageName = value; }
     void finalWork() { finalizing = true; }
     void requestStop() { stopRequested.store(true, std::memory_order_relaxed); }
+    static void consoleInterrupt(int) { consoleStop = 1; }
     double elapsed() const;
     double remaining() const;
     double reserve() const { return reserved; }
@@ -43,6 +45,7 @@ public:
 private:
     void check();
     static inline thread_local PlanningBudget* current = nullptr;
+    static inline volatile std::sig_atomic_t consoleStop = 0;
     PlanningBudget* previous = current;
     BudgetLimits limits;
     Clock::time_point started = Clock::now();
