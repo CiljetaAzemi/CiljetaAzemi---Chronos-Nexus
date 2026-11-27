@@ -61,6 +61,18 @@ struct InventoryPlanningInput {
     bool cacheRoutes = true;
 };
 
+struct InitialSchedulingProfile {
+    bool useWorkspace = false;
+    bool pruneRoutes = false;
+    size_t carrierPrunes = 0, fuelPrunes = 0, foundQueries = 0, missingQueries = 0;
+    long long foundNodes = 0, missingNodes = 0;
+    double foundDistance = 0;
+    size_t missionsTested = 0, retriesTested = 0, routeCalls = 0, routeHits = 0;
+    size_t shipChecks = 0, inventoryChecks = 0, workspaceBytes = 0;
+    long long nodes = 0, edges = 0;
+    double routeSeconds = 0, inventorySeconds = 0, totalSeconds = 0;
+};
+
 class MissionScheduler {
 public:
     static SchedulingResult schedule(
@@ -72,7 +84,8 @@ public:
         const std::function<void(size_t)>& progress = {},
         const InventoryPlanningInput* inventory = nullptr,
         bool benefitAware = false,
-        const std::function<void(const SchedulingResult&)>& publishPrefix = {}
+        const std::function<void(const SchedulingResult&)>& publishPrefix = {},
+        InitialSchedulingProfile* profile = nullptr
     );
     static bool feasible(const Mission& mission, const Spacecraft& ship,
         double departure, const RouteMetrics& route, double& arrival);

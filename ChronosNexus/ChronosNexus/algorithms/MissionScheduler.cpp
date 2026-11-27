@@ -56,7 +56,10 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
     std::vector<Spacecraft> ships, const GalaxyGraph& galaxy,
     const RouteWeights& weights, bool earliestArrival,
     const std::function<void(size_t)>& progress, const InventoryPlanningInput* inventory, bool benefitAware,
-    const std::function<void(const SchedulingResult&)>& publishPrefix) {
+    const std::function<void(const SchedulingResult&)>& publishPrefix, InitialSchedulingProfile* profile) {
+    using Clock = PlanningBudget::Clock;
+    const auto started = Clock::now();
+    RouteSearchWorkspace workspace;
     SchedulingResult result;
     std::optional<InventoryReservations> reservations;
     if (inventory)
@@ -70,8 +73,32 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
     auto cacheRevision = galaxy.revision();
     auto findRoute = [&](const Mission& mission, const RouteWeights& w) {
         auto search = [&] {
-            auto path = Dijkstra::findShortestPath(galaxy, mission.origin,
-                mission.destination, w, mission.cargoAmount);
+            const auto began = profile ? Clock::now() : Clock::time_point{};
+            if (profile)
+                ++profile->routeCalls;
+            PathResult path;
+            try {
+                path = Dijkstra::findShortestPath(galaxy, mission.origin,
+                    mission.destination, w, mission.cargoAmount,
+                    profile && profile->useWorkspace ? &workspace : nullptr);
+            } catch (const PlanningBudget::Interrupted&) {
+                if (profile)
+                    profile->routeSeconds += std::chrono::duration<double>(Clock::now() - began).count();
+                throw;
+            }
+            if (profile) {
+                profile->routeSeconds += std::chrono::duration<double>(Clock::now() - began).count();
+                profile->nodes += path.nodesExplored;
+                profile->edges += path.edgesExplored;
+                if (path.found) {
+                    ++profile->foundQueries;
+                    profile->foundNodes += path.nodesExplored;
+                    profile->foundDistance += path.metrics.distance;
+                } else {
+                    ++profile->missingQueries;
+                    profile->missingNodes += path.nodesExplored;
+                }
+            }
             result.nodesExplored += path.nodesExplored;
             return path;
         };
@@ -89,6 +116,8 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
             w.distance, w.fuel, w.time, w.risk, w.reliability};
         if (const auto hit = routes.find(key); hit != routes.end()) {
             ++result.routeCacheHits;
+            if (profile)
+                ++profile->routeHits;
             return hit->second;
         }
         auto path = search();
@@ -134,6 +163,22 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
         const auto origin = atLocation.find(mission.origin);
         if (origin == atLocation.end() || origin->second.empty())
             return false;
+        double availableFuel = 0;
+        if (profile && profile->pruneRoutes) {
+            bool eligible = false;
+            for (size_t i : origin->second) {
+                PlanningBudget::checkpoint();
+                double arrival;
+                if (feasible(mission, ships[i], ships[i].availableAt, {}, arrival)) {
+                    eligible = true;
+                    availableFuel = std::max(availableFuel, ships[i].currentFuel);
+                }
+            }
+            if (!eligible) {
+                ++profile->carrierPrunes;
+                return false;
+            }
+        }
         auto path = findRoute(mission, weights);
         if (!path.found)
             return false;
@@ -151,17 +196,22 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
             for (size_t i : origin->second) {
                 PlanningBudget::checkpoint();
                 ++result.candidates;
+                if (profile)
+                    ++profile->shipChecks;
                 const auto& ship = ships[i];
                 double arrival;
                 if (!feasible(mission, ship, ship.availableAt, candidate.metrics, arrival))
                     continue;
                 double departure = ship.availableAt;
                 if (reservations) {
+                    const auto began = profile ? Clock::now() : Clock::time_point{};
                     const double duration = candidate.metrics.time / ship.speed;
                     bool found = false;
                     for (double time : reservations->departures(mission.origin, mission.destination,
                         mission.cargoType, departure, mission.deadline - duration, duration, mission.cargoAmount)) {
                         ++result.reservationChecks;
+                        if (profile)
+                            ++profile->inventoryChecks;
                         if (feasible(mission, ship, time, candidate.metrics, arrival) &&
                             reservations->reserve(mission.origin, mission.destination, mission.cargoType,
                                 time, arrival, mission.cargoAmount, false)) {
@@ -170,6 +220,8 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
                             break;
                         }
                     }
+                    if (profile)
+                        profile->inventorySeconds += std::chrono::duration<double>(Clock::now() - began).count();
                     if (!found)
                         continue;
                 }
@@ -196,6 +248,11 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
             // A lightweight feasibility fallback. It can miss routes between these extremes.
             for (const RouteWeights alternative : {RouteWeights{0, 1, 0}, RouteWeights{0, 0, 1}}) {
                 auto alternatePath = findRoute(mission, alternative);
+                if (profile && profile->pruneRoutes && alternative.fuel == 1 &&
+                    alternatePath.found && alternatePath.metrics.fuel > availableFuel) {
+                    ++profile->fuelPrunes;
+                    break;
+                }
                 consider(alternatePath, alternative);
             }
         }
@@ -222,6 +279,8 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
         size_t nextPublication = 1;
         for (const auto& mission : missions) {
             PlanningBudget::checkpoint();
+            if (profile)
+                ++profile->missionsTested;
             if (progress)
                 progress(processed);
             ++processed;
@@ -251,6 +310,8 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
             // Try one append-only insertion pass. Existing ship assignments and times stay fixed.
             for (const auto* mission : retry) {
                 PlanningBudget::checkpoint();
+                if (profile)
+                    ++profile->retriesTested;
                 if (progress)
                     progress(processed);
                 ++processed;
@@ -292,6 +353,10 @@ SchedulingResult MissionScheduler::schedule(std::vector<Mission> missions,
         if (!publishPrefix)
             throw;
         result.interrupted = true;
+    }
+    if (profile) {
+        profile->workspaceBytes = workspace.bytes();
+        profile->totalSeconds = std::chrono::duration<double>(Clock::now() - started).count();
     }
     result.missionsScheduled = static_cast<int>(result.scheduled.size());
     return result;

@@ -312,8 +312,11 @@ AnytimePlan CivilizationPlanner::anytime(const benchmark::Scenario& data, const 
     const std::unordered_set<int>& colonies, int budget, double horizon, const RouteWeights& weights,
     const std::vector<Event>& knownProductionChanges, PlanningBudget& clock,
     bool coordinatedAllocator, bool indexedAid, bool reverseBounds,
-    const std::function<std::vector<Mission>()>& proposeAid, bool proactiveSimulation) {
+    const std::function<std::vector<Mission>()>& proposeAid, bool proactiveSimulation,
+    std::optional<int> profileInitial) {
     AnytimePlan result;
+    result.initialProfile.useWorkspace = profileInitial.value_or(0) > 0;
+    result.initialProfile.pruneRoutes = profileInitial.value_or(0) > 1;
     result.jobs = data.missions;
     auto publish = [&](const SchedulingResult& schedule, const InfrastructureOptimizationResult& construction,
         SimulationResult&& replay, const std::vector<Mission>& jobs) {
@@ -379,7 +382,7 @@ AnytimePlan CivilizationPlanner::anytime(const benchmark::Scenario& data, const 
                 clock.stage("prefix-validation");
                 replay(partial, {}, data.missions);
                 clock.stage("initial-scheduling");
-            });
+            }, profileInitial ? &result.initialProfile : nullptr);
         if (prefix.interrupted)
             throw PlanningBudget::Interrupted{};
         clock.stage("prefix-validation");

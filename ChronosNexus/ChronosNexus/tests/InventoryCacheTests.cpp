@@ -99,6 +99,57 @@ void testInventoryAndCache() {
         "Closure, reopening, risk changes, and new edges must invalidate cached searches.");
 
     const InventoryPlanningInput uncachedChain{chainBalances, chainBalances, noAid, false};
+    InitialSchedulingProfile indexed;
+    indexed.useWorkspace = true;
+    requireSamePlan(MissionScheduler::schedule({first, second}, {ship}, graph, {}, false, {}, &uncachedChain),
+        MissionScheduler::schedule({first, second}, {ship}, graph, {}, false, {}, &uncachedChain,
+            false, {}, &indexed));
+    require(indexed.routeCalls > 0 && indexed.workspaceBytes > 0,
+        "The compact scheduler must exercise reusable indexed routing.");
+    {
+        auto underfueled = ship;
+        underfueled.currentFuel = 1;
+        InitialSchedulingProfile pruned;
+        pruned.useWorkspace = pruned.pruneRoutes = true;
+        requireSamePlan(MissionScheduler::schedule({first}, {underfueled}, graph, {}, false, {}, &uncachedChain),
+            MissionScheduler::schedule({first}, {underfueled}, graph, {}, false, {}, &uncachedChain,
+                false, {}, &pruned));
+        require(pruned.fuelPrunes > 0, "Minimum fuel must certify that the minimum-time fallback cannot succeed.");
+        auto late = ship;
+        late.availableAt = first.deadline + 1;
+        pruned = {};
+        pruned.useWorkspace = pruned.pruneRoutes = true;
+        requireSamePlan(MissionScheduler::schedule({first}, {late}, graph, {}, false, {}, &uncachedChain),
+            MissionScheduler::schedule({first}, {late}, graph, {}, false, {}, &uncachedChain,
+                false, {}, &pruned));
+        require(pruned.carrierPrunes > 0 && pruned.routeCalls == 0,
+            "An already-late carrier must be rejected before searching.");
+    }
+    {
+        GalaxyGraph directed;
+        addTestRoute(directed, 10, 0, 1, 1, 2, 20);
+        addTestRoute(directed, 11, 0, 2, 1, 2, 20);
+        addTestRoute(directed, 12, 1, 3, 1, 2, 20);
+        addTestRoute(directed, 13, 2, 3, 1, 2, 20);
+        RouteSearchWorkspace workspace;
+        const auto compare = [&] {
+            const auto a = Dijkstra::findShortestPath(directed, 0, 3);
+            const auto b = Dijkstra::findShortestPath(directed, 0, 3, {}, 0, &workspace);
+            require(a.found && a.routeIds == b.routeIds && a.nodesExplored == b.nodesExplored &&
+                a.edgesExplored == b.edgesExplored, "Indexed routing must preserve deterministic tied paths.");
+        };
+        compare();
+        directed.blockRoute(12);
+        compare();
+        directed.addLocation(1000000000);
+        compare();
+        PlanningBudget budget({10});
+        budget.requestStop();
+        bool cancelled = false;
+        try { Dijkstra::findShortestPath(directed, 0, 3, {}, 0, &workspace); }
+        catch (const PlanningBudget::Interrupted&) { cancelled = true; }
+        require(cancelled, "An indexed route query must honor cooperative cancellation.");
+    }
     first.deadline = 8;
     requireSamePlan(MissionScheduler::schedule({first, second}, {ship}, graph, {}, false, {}, &uncachedChain),
         chainPlan);

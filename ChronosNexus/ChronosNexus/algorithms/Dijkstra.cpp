@@ -40,15 +40,43 @@ void RouteMetrics::add(const Route& edge) {
     reliability *= edge.reliability;
 }
 
+void RouteSearchWorkspace::prepare(const GalaxyGraph& source) {
+    if (graph == &source && revision == source.revision())
+        return;
+    int highest = -1;
+    bool compact = true;
+    for (const auto& [id, edges] : source.adjacency()) {
+        if (id < 0 || static_cast<size_t>(id) / 2 >= source.locationCount()) {
+            compact = false;
+            break;
+        }
+        highest = std::max(highest, id);
+    }
+    labels.assign(compact ? static_cast<size_t>(highest + 1LL) : 0, {});
+    outgoing.assign(labels.size(), nullptr);
+    if (!labels.empty())
+        for (const auto& [id, edges] : source.adjacency())
+            outgoing[id] = &edges;
+    stamp = 0;
+    graph = &source;
+    revision = source.revision();
+}
+
+size_t RouteSearchWorkspace::bytes() const {
+    return labels.capacity() * sizeof(Label) + outgoing.capacity() * sizeof(outgoing.front()) +
+        queue.capacity() * sizeof(queue.front());
+}
+
 PathResult Dijkstra::findShortestPath(const GalaxyGraph& graph, int start,
-    int destination, const RouteWeights& weights, double cargo) {
+    int destination, const RouteWeights& weights, double cargo, RouteSearchWorkspace* workspace) {
     if (!graph.hasLocation(destination))
         return {};
-    return findNearest(graph, start, [=](int node) { return node == destination; }, weights, cargo);
+    return findNearest(graph, start, [=](int node) { return node == destination; }, weights, cargo, workspace);
 }
 
 PathResult Dijkstra::findNearest(const GalaxyGraph& graph, int start,
-    const std::function<bool(int)>& isDestination, const RouteWeights& weights, double cargo) {
+    const std::function<bool(int)>& isDestination, const RouteWeights& weights, double cargo,
+    RouteSearchWorkspace* workspace) {
     PathResult result;
     if (!nonnegative(weights.distance) || !nonnegative(weights.fuel) ||
         !nonnegative(weights.time) || !nonnegative(weights.risk) ||
@@ -57,17 +85,35 @@ PathResult Dijkstra::findNearest(const GalaxyGraph& graph, int start,
         return result;
 
     using Item = std::pair<double, int>;
-    std::priority_queue<Item, std::vector<Item>, std::greater<Item>> queue;
+    if (workspace)
+        workspace->prepare(graph);
+    const bool dense = workspace && !workspace->labels.empty();
+    std::vector<Item> temporary;
+    auto& queue = dense ? workspace->queue : temporary;
+    queue.clear();
     std::unordered_map<int, double> distance;
     std::unordered_map<int, int> parentEdge;
-    distance[start] = 0;
-    queue.push({0, start});
+    if (dense && ++workspace->stamp == 0) {
+        for (auto& label : workspace->labels)
+            label.stamp = 0;
+        ++workspace->stamp;
+    }
+    const auto push = [&](double cost, int node) {
+        queue.emplace_back(cost, node);
+        std::push_heap(queue.begin(), queue.end(), std::greater<Item>{});
+    };
+    if (dense)
+        workspace->labels[start] = {0, 0, workspace->stamp};
+    else
+        distance[start] = 0;
+    push(0, start);
     int destination = start;
     while (!queue.empty()) {
         PlanningBudget::checkpoint();
-        auto [cost, node] = queue.top();
-        queue.pop();
-        if (cost != distance.at(node))
+        std::pop_heap(queue.begin(), queue.end(), std::greater<Item>{});
+        const auto [cost, node] = queue.back();
+        queue.pop_back();
+        if (cost != (dense ? workspace->labels[node].cost : distance.at(node)))
             continue;
         ++result.nodesExplored;
         if (isDestination(node)) {
@@ -76,18 +122,26 @@ PathResult Dijkstra::findNearest(const GalaxyGraph& graph, int start,
             result.totalCost = cost;
             break;
         }
-        for (const Route& edge : graph.getRoutes(node)) {
+        for (const Route& edge : dense ? *workspace->outgoing[node] : graph.getRoutes(node)) {
             if ((result.edgesExplored & 127) == 0)
                 PlanningBudget::checkpoint();
             ++result.edgesExplored;
             if (!usable(edge, cargo))
                 continue;
             const double next = cost + edgeCost(edge, weights);
+            if (dense) {
+                auto& label = workspace->labels[edge.to];
+                if (std::isfinite(next) && (label.stamp != workspace->stamp || next < label.cost)) {
+                    label = {next, edge.id, workspace->stamp};
+                    push(next, edge.to);
+                }
+                continue;
+            }
             auto previous = distance.find(edge.to);
             if (std::isfinite(next) && (previous == distance.end() || next < previous->second)) {
                 distance[edge.to] = next;
                 parentEdge[edge.to] = edge.id;
-                queue.push({next, edge.to});
+                push(next, edge.to);
             }
         }
     }
@@ -96,7 +150,7 @@ PathResult Dijkstra::findNearest(const GalaxyGraph& graph, int start,
 
     for (int node = destination; node != start;) {
         result.path.push_back(node);
-        const int id = parentEdge.at(node);
+        const int id = dense ? workspace->labels[node].parent : parentEdge.at(node);
         result.routeIds.push_back(id);
         node = graph.findRoute(id)->from;
     }

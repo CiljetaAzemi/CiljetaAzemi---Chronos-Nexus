@@ -67,6 +67,7 @@ int runBenchmark(int argc, char* argv[]) {
         mode != "stress" && mode != "stress-all-routes" && !inventoryMode)
         throw std::invalid_argument("Unknown benchmark mode.");
     bool trace = false, traceCandidates = false, reportCivilization = civilization;
+    std::optional<int> profileInitial;
     bool experimentalAllocator = false;
     bool feasibilityAwareAllocator = false;
     bool indexedAid = true;
@@ -80,6 +81,12 @@ int runBenchmark(int argc, char* argv[]) {
         const std::string option = argv[i];
         if (option == "--trace-plan")
             trace = true;
+        else if (option == "--profile-initial")
+            profileInitial = false;
+        else if (option == "--indexed-initial")
+            profileInitial = 1;
+        else if (option == "--pruned-initial")
+            profileInitial = 2;
         else if (option == "--trace-candidates")
             traceCandidates = true;
         else if (option == "--experimental-allocator")
@@ -198,7 +205,17 @@ int runBenchmark(int argc, char* argv[]) {
                 auto allocation = ResourceAllocator::allocateWithRoutes(data.aidDemands, data.graph, weights,
                     {}, experimentalAllocator);
                 return LogisticsPlanner::createMissions(allocation, data.aidDemands, ResourceType::Food, 24, size.missions);
-            });
+            }, false, profileInitial);
+        if (profileInitial) {
+            const auto& p = result.initialProfile;
+            std::cout << std::setprecision(12) << "INITIAL_PROFILE," << p.missionsTested << ','
+                      << p.retriesTested << ',' << p.routeCalls << ',' << p.routeHits << ',' << p.nodes << ','
+                      << p.edges << ',' << p.shipChecks << ',' << p.inventoryChecks << ',' << p.workspaceBytes
+                      << ',' << p.routeSeconds << ',' << p.inventorySeconds << ',' << p.totalSeconds
+                      << ',' << p.carrierPrunes << ',' << p.fuelPrunes << ',' << p.foundQueries
+                      << ',' << p.missingQueries << ',' << p.foundNodes << ',' << p.missingNodes
+                      << ',' << p.foundDistance << '\n';
+        }
         std::cout << std::setprecision(12);
         for (const auto& row : result.trace)
             std::cout << "INCUMBENT," << row.seconds << ',' << row.legacyScore << ',' << row.expandedScore

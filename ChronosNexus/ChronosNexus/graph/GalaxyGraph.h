@@ -16,6 +16,7 @@ private:
     //For large, sparse graphs, an adjacency list is generally
     //much more memory-efficient than an adjacency matrix.
 public:
+    const auto& adjacency() const { return adjacencyList; }
     // Add a location (planet, colony or station)
     void addLocation(int locationId);
 

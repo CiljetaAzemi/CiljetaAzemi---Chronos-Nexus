@@ -40,6 +40,21 @@ struct TravelTimeBounds {
     long long edges = 0;
 };
 
+// Reused by a caller issuing many searches on one graph revision.
+class RouteSearchWorkspace {
+    friend class Dijkstra;
+    struct Label { double cost; int parent; std::uint64_t stamp = 0; };
+    std::vector<Label> labels;
+    std::vector<const std::vector<Route>*> outgoing;
+    std::vector<std::pair<double, int>> queue;
+    std::uint64_t stamp = 0;
+    std::uint64_t revision = 0;
+    const GalaxyGraph* graph = nullptr;
+public:
+    void prepare(const GalaxyGraph& source);
+    size_t bytes() const;
+};
+
 class Dijkstra {
 public:
     static TravelTimeBounds reverseTimeBounds(const GalaxyGraph& reversed, int receiver);
@@ -50,12 +65,13 @@ public:
         int start,
         int destination,
         const RouteWeights& weights = {},
-        double cargo = 0
+        double cargo = 0,
+        RouteSearchWorkspace* workspace = nullptr
     );
     static bool measure(const GalaxyGraph& graph,
         const std::vector<int>& routeIds, int origin, int destination,
         double cargo, RouteMetrics& metrics);
     static PathResult findNearest(const GalaxyGraph& graph, int start,
         const std::function<bool(int)>& isDestination,
-        const RouteWeights& weights, double cargo = 0);
+        const RouteWeights& weights, double cargo = 0, RouteSearchWorkspace* workspace = nullptr);
 };

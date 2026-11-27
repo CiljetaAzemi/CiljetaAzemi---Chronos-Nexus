@@ -41,6 +41,7 @@ struct AnytimePlan {
     double validationSeconds = 0;
     int evaluated = 0, accepted = 0, interrupted = 0;
     bool planningComplete = false;
+    InitialSchedulingProfile initialProfile;
 };
 
 class CivilizationPlanner {
@@ -53,7 +54,8 @@ public:
         const std::unordered_set<int>& colonies, int budget, double horizon, const RouteWeights& weights,
         const std::vector<Event>& knownProductionChanges, PlanningBudget& clock,
         bool coordinatedAllocator, bool indexedAid, bool reverseBounds,
-        const std::function<std::vector<Mission>()>& proposeAid, bool proactiveSimulation = false);
+        const std::function<std::vector<Mission>()>& proposeAid, bool proactiveSimulation = false,
+        std::optional<int> profileInitial = std::nullopt);
 
     static CoordinatedAid coordinateAid(CivilizationPlan& plan, const std::vector<Mission>& obligations,
         const std::vector<ResourceDemand>& accounts, const std::vector<ResourceDemand>& network,

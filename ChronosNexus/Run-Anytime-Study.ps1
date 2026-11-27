@@ -3,11 +3,16 @@ param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [switch]$Refinement,
     [switch]$BalancedStudy,
+    [switch]$InitialSchedulingStudy,
+    [switch]$RouteReductionStudy,
+    [ValidateSet('hash','indexed','pruned')][string[]]$InitialVariants = @('hash','indexed','pruned'),
     [ValidateSet('small','medium','large','extreme')][string[]]$Sizes = @('small','medium','large'),
     [ValidateSet('legacy','security-priority','balanced-priority')][string]$ExtremePolicy,
     [ValidateSet(60000,120000,300000)][int[]]$ExtremeBudgetsMs = @(60000,120000,300000)
 )
 $ErrorActionPreference = 'Stop'
+if ($RouteReductionStudy) { $InitialSchedulingStudy = $true }
+if ($InitialSchedulingStudy) { $BalancedStudy = $true }
 if ($BalancedStudy) { $Refinement = $true }
 if ('extreme' -in $Sizes -and !$BalancedStudy) { throw 'Extreme requires -BalancedStudy.' }
 $exe = (Resolve-Path -LiteralPath $Executable).Path
@@ -55,6 +60,17 @@ if ($BalancedStudy) {
 $summaryFields = 'feasible','planning_complete','simulation_complete','first_feasible_s','first_nonempty_s',
     'evaluated','improved','interrupted','validation_s','reserve_s','engine_elapsed_s','engine_peak_bytes',
     'exhaustion','exhaustion_stage','engine_overshoot_s'
+if ($InitialSchedulingStudy) {
+    $cases = @(
+        @('small',20261214,'standard',@(2500)),
+        @('small',20261130,'scarcity',@(2500)),
+        @('medium',20261127,'scarcity',@(5000)),
+        @('medium',20261215,'production-cut',@(5000)),
+        @('medium',20261201,'dynamic',$(if ($RouteReductionStudy) { ,@(5000,5000) } else { ,@(5000) })),
+        @('large',20261216,'standard',@(45000)),
+        @('extreme',20261217,'standard',$ExtremeBudgetsMs)
+    )
+}
 $metricFields = 'legacy_score','expanded_score','completed','failed','timely_service','critical_shortage',
     'total_shortage','unserved_consumption','transportation_cost','fuel','waste','risk','events_applied'
 $traceFields = 'seconds','legacy_score','expanded_score','scheduled','failed','unscheduled_external',
@@ -103,8 +119,11 @@ foreach ($case in $cases) {
         $variants += ,@('expanded', $true, $false)
         $variants += ,@('expanded-indexed-aid', $true, $true)
     }
+    if ($InitialSchedulingStudy) { $variants = @(@('hash',$false,$false),@('indexed',$false,$false)) }
+    if ($RouteReductionStudy) { $variants += ,@('pruned',$false,$false) }
     foreach ($variant in $variants) {
         $variantName, $expanded, $aid = $variant
+        if ($InitialSchedulingStudy -and $variantName -notin $InitialVariants) { continue }
         if ($size -eq 'extreme' -and $ExtremePolicy -and $variantName -ne $ExtremePolicy) { continue }
         $times = if ($variantName -eq 'legacy') { @(0) + $budgets } else { @(0, $budgets[-1]) }
         if ($Refinement -and $size -eq 'large') {
@@ -120,10 +139,15 @@ foreach ($case in $cases) {
                 $times = @(0) + $budgets
             }
         }
+        if ($InitialSchedulingStudy) { $times = $budgets }
         foreach ($milliseconds in $times) {
             $run++
             $stem = Join-Path $output ('{0:D2}-{1}-{2}-{3}-{4}' -f $run,$size,$scenario,$variantName,$milliseconds)
             $argsList = @('--benchmark', $size, "$seed", 'phase3', "--scenario=$scenario")
+            if ($InitialSchedulingStudy) {
+                $argsList += if ($variantName -eq 'pruned') { '--pruned-initial' } elseif ($variantName -eq 'indexed') { '--indexed-initial' } else { '--profile-initial' }
+                $argsList += '--trace-plan'
+            }
             if ($expanded) { $argsList += '--expanded-objective' }
             if ($variantName.StartsWith('security-priority')) { $argsList += '--security-priority' }
             if ($variantName -eq 'expanded-security-profile') { $argsList += '--objective=security' }
@@ -170,6 +194,19 @@ foreach ($case in $cases) {
                 Add-Fields $row @('generation_s','initialized_s') (Read-Record $lines 'INPUT_TIMING')
                 Add-Fields $row @('incumbent_graph_nodes','incumbent_ship_checks','local_arcs','local_pruned_arcs','route_cache_hits') (Read-Record $lines 'ANYTIME_WORK')
             }
+            if ($InitialSchedulingStudy) {
+                $profile = @(Read-Record $lines 'INITIAL_PROFILE')
+                Add-Fields $row @('initial_missions','initial_retries','route_calls','cache_hits','route_nodes','route_edges',
+                    'ship_checks','inventory_checks','workspace_bytes','route_s','inventory_s','initial_s','carrier_prunes','fuel_prunes','found_queries','missing_queries','found_nodes','missing_nodes','found_distance_sum') $profile
+                $decisions = @($lines | Where-Object { $_.StartsWith('PLAN,assigned,') } | Sort-Object)
+                $row['assignment_sha256'] = if ($decisions.Count) {
+                    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+                        [Text.Encoding]::UTF8.GetBytes(($decisions -join "`n"))))
+                } else { 'NA' }
+                $row['initial_missions_per_s'] = if ($profile.Count -and [double]$row['initial_s'] -gt 0) {
+                    ([int]$row['initial_missions'] + [int]$row['initial_retries']) / [double]$row['initial_s']
+                } else { 'NA' }
+            }
             if ($milliseconds) {
                 Add-Fields $row $metricFields (Read-Record $lines 'ANYTIME_OUTCOME')
                 $samples = @($lines | Where-Object { $_.StartsWith('INCUMBENT,') })
@@ -212,6 +249,11 @@ foreach ($case in $cases) {
                     $row['assigned_external'] = $assigned
                     $row['assigned_external_pct'] = 100.0 * $assigned / $row['input_missions']
                 }
+            }
+            if ($InitialSchedulingStudy) {
+                $row['assigned_per_engine_s'] = if ($row['assigned_external'] -ne 'NA' -and $row['engine_elapsed_s'] -ne 'NA') {
+                    [int]$row['assigned_external'] / [double]$row['engine_elapsed_s']
+                } else { 'NA' }
             }
             [pscustomobject]$row | Export-Csv -NoTypeInformation -Append (Join-Path $output 'anytime.csv')
             if ($status -eq 'failed') { Write-Warning (Get-Content -LiteralPath "$stem.stderr.txt" -Raw) }

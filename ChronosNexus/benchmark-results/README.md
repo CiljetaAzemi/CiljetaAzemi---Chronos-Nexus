@@ -289,3 +289,42 @@ The retained observations use one seed and the same 100,000 planets, 1,000,000 r
 All nine retained runs stopped during initial scheduling and completed event simulation of their validated partial plans. Generation took 0.49–1.18 s, initialization finished by 1.27 s, and the first validated nonempty candidate arrived in 2.40–5.20 s. Peak working sets were approximately 743–745 MiB. All retained runs met their time budgets and stayed below the sampled 1,024 MiB threshold. All left 20,000 units of critical ending shortage. Realized essential coverage was 98.876–98.879%, which reflects substantial existing supply alongside minimal mission assignment. At 300 s the balanced and strict plans each consumed 25,843.71 fuel and left 201,535 units of total ending shortage. The retained schedules recorded roughly 139 million graph-node expansions each. Later improvement stages were unreached, so their pruning counters were zero. No comparable unpruned Extreme control was run.
 
 [Extreme outcomes and execution context](balanced-extreme.csv) · [Extreme incumbent traces](balanced-extreme-incumbents.csv) · [Extreme assignments over time](balanced-extreme-curves.svg)
+
+## Initial scheduling scalability
+
+### Exact route-search reduction
+
+Run the same study command below with `-RouteReductionStudy` in place of `-InitialSchedulingStudy` to add the indexed-plus-pruning variant. The urgent-event case has two repetitions per mode. The pruned variant uses the same objective, mission ordering, constrained routes and reservation checks. On the matched Large case it issued 5,016 searches versus 8,402 (40.3% fewer), expanded 6.25 million nodes versus 11.30 million (44.6% fewer) and reduced initial scheduling from 6.45 s to 4.56 s. Final assignment hashes matched. Compare expansion percentages only at equivalent decision work. Within fixed Extreme budgets, faster variants can expand more nodes while processing more missions. [Pruning argument and routing alternatives](../ANYTIME.md#exact-carrier-and-fuel-pruning)
+
+The Large indexed control averaged 1,136 expanded nodes per found query and 9,795 per missing query. It captured 6,240 exact cache hits, while the Extreme 60 s indexed control captured only a few. The Large pruned pass made 2,232 carrier rejections and skipped 75 minimum-time fallbacks on fuel grounds. Cache hits describe the queries actually made and retained by the cache. They do not measure overlap across distinct cargo, weights or endpoints.
+
+| Extreme budget | Hash attempts/s and assignments | Indexed attempts/s and assignments | Pruned attempts/s and assignments |
+|---|---:|---:|---:|
+| 60 s | 9.97 / 55 | 20.04 / 108 | 56.30 / 436 |
+| 120 s | 9.49 / 108 | 21.76 / 334 | 55.65 / 1,154 |
+
+All six runs returned a validated partial plan and completed event simulation. At both budgets, every indexed assignment line appeared verbatim in the corresponding pruned trace. At 120 s, pruning evaluated about 2.6 times as many attempts with 2.9% fewer aggregate graph expansions. The pruned plan completed 1,148 missions with six failures, up from 332 completions and two failures. Critical ending shortage was unchanged at 20,000. The primary limiting stage remained initial scheduling.
+
+[Route-reduction measurements](route-reduction-study.csv) · [Validated nominal incumbents](route-reduction-incumbents.csv)
+
+The 300 s follow-up ran only the promising pruned mode. Use `-RouteReductionStudy -Sizes extreme -InitialVariants pruned -ExtremeBudgetsMs 300000`. It validated 5,841 assignments (11.68%) at 297.93 s and returned in 299.87 s wall time, peaking at 755.51 MiB. Event simulation did not finish. The 18.14% timely fulfillment, 20,000 critical ending shortage, and 127,403.73 unmet consumption at that checkpoint are nominal forecasts. The earlier indexed run assigned 2,200 and completed event simulation. It is a historical reference, with no same-session 300 s timing control. [Follow-up summary](route-reduction-300.csv) · [Follow-up incumbents](route-reduction-300-incumbents.csv)
+
+```powershell
+./ChronosNexus/Run-Anytime-Study.ps1 -InitialSchedulingStudy -Sizes small,medium,large,extreme -ExtremeBudgetsMs 60000,120000 -Executable PATH_TO_RELEASE_X64_EXE -OutputDirectory PATH_TO_NEW_RESULTS_DIRECTORY
+```
+
+The runner compares the original and indexed routing workspaces sequentially with the same Legacy objective, mission order, seeds, constraints and generated event streams. The external watchdog and 1,024 MiB sampled working-set limit remain active. Assignment hashes include mission, spacecraft, departure, arrival and exact route data. Compare hashes only when decision work finishes or a fixed prefix is matched. Runs interrupted at the same wall budget can process different numbers of missions. Route nodes and edges count completed shortest-path queries, and route elapsed time includes interrupted queries. [Instrumentation and complexity](../ANYTIME.md)
+
+All six completed Small, Medium and Large pairs produced identical final assignment hashes and realized outcomes. The indexed initial scheduler was 1.29–1.93 times as fast over these pairs. On Large, route searches accounted for 8.44 of 8.89 s of baseline initial scheduling. Inventory probes accounted for approximately 0.019 s. The indexed pass took 5.77 s and issued the same 8,402 searches, explored the same 11.30 million vertices and inspected the same 112.24 million adjacency entries. Both had 6,240 existing route-cache hits, 40,618 ship inspections and 44,755 tentative inventory probes. The retained indexed workspace capacity was 454,272 bytes. The whole engine took 37.95 s for the control and 35.28 s indexed, so most elapsed time remained in later steps.
+
+| Extreme budget | Tested per initial-scheduler second, hash / indexed | External assignments, hash / indexed | Completed / failed, hash → indexed |
+|---|---:|---:|---:|
+| 60 s | 12.32 / 26.45 | 71 / 167 | 71 / 0 → 167 / 0 |
+| 120 s | 14.49 / 29.55 | 200 / 502 | 199 / 1 → 499 / 3 |
+| 300 s | 16.25 / 36.22 | 756 / 2,200 | 752 / 4 → 2,189 / 11 |
+
+All four runs returned validated partial plans and completed event simulation. The common nominal prefix samples matched on both scores and every recorded quality metric. Every assigned trace line in each hash control also appeared verbatim in the indexed trace at the same budget. At 120 s, timely external fulfillment rose from 1.16% to 2.66% and unmet consumption fell from 134,218.42 to 134,005.42. Ending shortage rose from 200,831 to 201,637. Critical ending shortage stayed at 20,000. More missions also increased transport, fuel and risk. The 120 s indexed peak was 748.08 MiB versus 744.03 MiB for hash routing. The workspace reserved about 4.04 MiB. Equal-budget comparison therefore measures more search completed within the limit, alongside the consequences of assigning more missions.
+
+[Sequential results and assignment hashes](initial-scheduling-study.csv) · [Validated incumbent samples](initial-scheduling-incumbents.csv)
+
+The 300 s pair was run sequentially after the shorter comparisons showed higher throughput. To reproduce it, use the same command with `-Sizes extreme -ExtremeBudgetsMs 300000` and a fresh output directory. All 756 hash assignments appeared verbatim in the indexed trace. Both runs stopped during initial scheduling and completed simulation. Indexed assigned 4.40% of external missions versus 1.51% for hash, and peak working set rose from 746.75 to 752.56 MiB. Wall times were 298.41 and 298.91 s, respectively. Timely fulfillment rose from 3.80% to 9.11% and unmet consumption fell by 1,688.27 units. Critical ending shortage held at 20,000. Total ending shortage rose by 2,524.27 units, and fuel rose from 44,287.70 to 123,902.12. The larger plan also had higher transportation costs, waste and risk. The same-budget results show a capacity improvement with mixed civilization outcomes.
